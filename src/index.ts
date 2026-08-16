@@ -1,4 +1,6 @@
 import { readFileSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name = 'dsh-model-reasoning'
@@ -34,8 +36,8 @@ const CACHE_MIN_BYTES = 10 * 1024
 // 异步拉取最新数据的延迟：避免与首轮缓存填充的读取/写入冲突
 const REFRESH_DELAY_MS = 5_000
 
-// models.dev 缓存文件：构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
-const cacheUrl = new URL('./public/models-cache.json', import.meta.url)
+// models.dev 缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
+const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
 
 // 推理级别取值（与 harness 的 ModelThinkingLevel 一致）
 const LEVELS = new Set(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
@@ -196,8 +198,8 @@ let catalogCache: Catalog | undefined
 /** 从缓存文件加载目录：存在、大小 >= 10KB 且解析成功才算可用（避免写入中途截断误判），否则返回 undefined */
 function readCache(): Catalog | undefined {
     try {
-        if (statSync(cacheUrl).size < CACHE_MIN_BYTES) return
-        const cached = JSON.parse(readFileSync(cacheUrl, 'utf8')) as Record<string, unknown>
+        if (statSync(cacheFile).size < CACHE_MIN_BYTES) return
+        const cached = JSON.parse(readFileSync(cacheFile, 'utf8')) as Record<string, unknown>
         return indexApiJson(cached)
     } catch {
         return
@@ -214,7 +216,7 @@ async function fetchLatest(): Promise<Catalog> {
     const api = (await res.json()) as Record<string, unknown>
     // 网络获取成功：覆盖缓存（只读环境写失败则忽略，不影响本次运行）
     try {
-        writeFileSync(cacheUrl, JSON.stringify(api))
+        writeFileSync(cacheFile, JSON.stringify(api))
     } catch {
         // 缓存写入是可选的
     }
