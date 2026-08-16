@@ -9,4 +9,6 @@ export default defineConfig({
   fixedExtension: false,
   dts: false,
   clean: true,
+  // 将 public 目录原样复制
+  copy: 'public',
 })
