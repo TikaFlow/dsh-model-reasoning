@@ -1,4 +1,5 @@
-import { readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -230,12 +231,10 @@ async function fetchLatest(): Promise<IndexedCatalog> {
     })
     if (!res.ok) throw new Error(`${API_URL} -> ${res.status}`)
     const api = (await res.json()) as Record<string, unknown>
-    // 网络获取成功：覆盖缓存（只读环境写失败则忽略，不影响本次运行）
-    try {
-        writeFileSync(cacheFile, JSON.stringify(api))
-    } catch {
+    // 网络获取成功：异步覆盖缓存，避免同步写大文件阻塞事件循环（只读环境写失败则忽略，不影响本次运行）
+    await writeFile(cacheFile, JSON.stringify(api)).catch(() => {
         // 缓存写入是可选的
-    }
+    })
     return indexApiJson(api)
 }
 
