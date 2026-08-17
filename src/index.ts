@@ -17,8 +17,15 @@ declare module '@deepseek-ai/cordis' {
 }
 
 interface SettingsService {
-    get(ns: string): unknown
+    describe(): SettingsDescriptor[]
     mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
+}
+
+/** 命名空间描述符：value 为当前解析值，revision 供写回时做并发冲突校验 */
+interface SettingsDescriptor {
+    ns: string
+    revision: number
+    value: unknown
 }
 
 interface SettingsPathOp {
@@ -35,6 +42,8 @@ const FETCH_MS = 10_000
 const CACHE_MIN_BYTES = 10 * 1024
 // 异步拉取最新数据的延迟：避免与首轮缓存填充的读取/写入冲突
 const REFRESH_DELAY_MS = 5_000
+// 并发冲突后的填充重试上限：每次重读重算，仍冲突则放弃，交由后续事件再触发
+const FILL_MAX_ATTEMPTS = 2
 
 // models.dev 缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
 const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
@@ -230,37 +239,57 @@ async function fetchLatest(): Promise<IndexedCatalog> {
     return indexApiJson(api)
 }
 
-/** 遍历配置的模型，判断并填充推理级别，将有变更的模型写回设置 */
+/** 判断错误是否为并发写入冲突（settings 命名空间在读写之间被改动） */
+function isSettingsConflict(error: unknown): boolean {
+    return (error as { code?: unknown } | null)?.code === 'SETTINGS_CONFLICT'
+}
+
+/**
+ * 遍历配置的模型，判断并填充推理级别，将有变更的模型以定向 op 写回设置。
+ * 定向 op 只写单个模型的 reasoningEfforts 字段，避免整段覆写 models 数组冲掉并发改动；
+ * 写回时携带描述符 revision，冲突则重读重算，超过上限放弃。
+ */
 async function fill(ctx: Context): Promise<void> {
-    const section = ctx.settings.get(NS) as { providers?: Record<string, unknown> } | undefined
-    const providers = section?.providers
-    if (providers == null || typeof providers !== 'object') return
-    // 使用当前内存索引（无可用数据时为空索引）
-    const indexed = indexedCache ?? EMPTY_INDEX
-    const ops: SettingsPathOp[] = []
-    for (const [providerId, provider] of Object.entries(providers)) {
-        if (provider == null || typeof provider !== 'object') continue
-        const models = (provider as { models?: unknown }).models
-        if (!Array.isArray(models) || models.length === 0) continue
-        let changed = false
-        const next = models.map((model) => {
-            if (model == null || typeof model !== 'object') return model
-            const { id, reasoningEfforts } = model as { id?: unknown; reasoningEfforts?: unknown }
-            // 已有推理级别或缺少 id 的模型保持原样
-            if (id == null || reasoningEfforts !== undefined) return model
-            const efforts = toReasoningEfforts(lookup(indexed, String(id)))
-            if (efforts === undefined) return model
-            changed = true
-            // 保留其余配置字段，仅补充推理级别
-            return { ...(model as Record<string, unknown>), reasoningEfforts: efforts }
-        })
-        if (changed) ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
+    for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
+        const descriptor = ctx.settings.describe().find((d) => d.ns === NS)
+        if (!descriptor) return
+        const providers = (descriptor.value as { providers?: Record<string, unknown> } | undefined)?.providers
+        if (providers == null || typeof providers !== 'object') return
+        // 使用当前内存索引（无可用数据时为空索引）
+        const indexed = indexedCache ?? EMPTY_INDEX
+        const ops: SettingsPathOp[] = []
+        let filled = 0
+        for (const [providerId, provider] of Object.entries(providers)) {
+            if (provider == null || typeof provider !== 'object') continue
+            const models = (provider as { models?: unknown }).models
+            if (!Array.isArray(models)) continue
+            for (let i = 0; i < models.length; i++) {
+                const model = models[i]
+                if (model == null || typeof model !== 'object') continue
+                const { id, reasoningEfforts } = model as { id?: unknown; reasoningEfforts?: unknown }
+                // 已有推理级别或缺少 id 的模型保持原样
+                if (id == null || reasoningEfforts !== undefined) continue
+                const efforts = toReasoningEfforts(lookup(indexed, String(id)))
+                if (efforts === undefined) continue
+                filled++
+                ops.push({
+                    op: 'set',
+                    path: ['providers', providerId, 'models', String(i), 'reasoningEfforts'],
+                    value: efforts,
+                })
+            }
+        }
+        if (ops.length === 0) return
+        try {
+            await ctx.settings.mutate(NS, ops, descriptor.revision)
+            ctx.logger?.info?.(`${name}: 已为 ${filled} 个模型填充推理级别`)
+            return
+        } catch (error) {
+            // 并发冲突：重读重算一轮；仍冲突则抛出，由 runFill 记录日志
+            if (isSettingsConflict(error) && attempt < FILL_MAX_ATTEMPTS) continue
+            throw error
+        }
     }
-    if (ops.length === 0) return
-    await ctx.settings.mutate(NS, ops)
-    ctx.logger?.info?.(
-        `${name}: 已为 ${ops.length} 个提供商的模型填充推理级别`,
-    )
 }
 
 /** 执行一轮填充并统一记录失败日志 */
