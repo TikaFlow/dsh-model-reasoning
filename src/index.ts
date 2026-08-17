@@ -298,14 +298,19 @@ function runFill(ctx: Context): void {
     })
 }
 
-/** 异步拉取最新数据：成功后更新内存目录并再次填充，失败记录日志（继续使用现有目录） */
-function refresh(ctx: Context): void {
+/**
+ * 异步拉取最新数据：成功后更新内存索引并再次填充，失败记录日志（继续使用现有索引）。
+ * isDisposed 由 effect 生命周期提供：插件卸载后刷新结果不再触碰已卸载的上下文。
+ */
+function refresh(ctx: Context, isDisposed: () => boolean): void {
     fetchLatest()
         .then((indexed) => {
+            if (isDisposed()) return
             indexedCache = indexed
             runFill(ctx)
         })
         .catch((error) => {
+            if (isDisposed()) return
             ctx.logger?.warn?.(
                 `${name}: 拉取 models.dev 最新数据失败，继续使用现有目录（${error instanceof Error ? error.message : String(error)}）`,
             )
@@ -318,19 +323,20 @@ export function apply(ctx: Context) {
         if (ns !== NS) return
         runFill(ctx)
     })
-    // 进入插件：缓存可用则立即用缓存填充，随后延迟拉取最新数据并再次填充
+    // 进入插件：缓存可用则立即用缓存填充
     const cached = readCache()
     if (cached) {
         indexedCache = cached
         runFill(ctx)
-        // 延迟 5s 拉取，避免与首轮填充的缓存读取/写入冲突；成功后更新缓存并再次填充
-        ctx.effect(() => {
-            const timer = setTimeout(() => refresh(ctx), REFRESH_DELAY_MS)
-            // 插件卸载时自动清除定时器
-            return () => clearTimeout(timer)
-        })
-        return
     }
-    // 缓存不可用（不存在、过小或解析失败；理论上不会发生，构建已保留缓存）：拉取最新数据填充并更新缓存
-    refresh(ctx)
+    // 刷新统一由 effect 管理：卸载时清除定时器并置位，在途刷新结果不再触碰已卸载的上下文。
+    // 缓存可用时延迟拉取避免与首轮填充冲突；缓存不可用（构建已保留缓存，理论不会发生）则立即拉取
+    ctx.effect(() => {
+        let disposed = false
+        const timer = setTimeout(() => refresh(ctx, () => disposed), cached ? REFRESH_DELAY_MS : 0)
+        return () => {
+            disposed = true
+            clearTimeout(timer)
+        }
+    })
 }
