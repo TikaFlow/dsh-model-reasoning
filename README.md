@@ -9,18 +9,12 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 - 监听 `settings/updated` 事件，模型配置变更后自动重新填充
 - 仅填充缺少 `reasoningEfforts` 的模型，已有配置不受影响
 
-## 构建
+## 安装
 
 ```bash
-pnpm install
-pnpm build         # 构建到 lib/
-pnpm run typecheck # 类型检查
+dsh plugin --profile web add github:TikaFlow/dsh-model-reasoning
 ```
 
-构建后 `lib/public/models-cache.json` 为随插件分发的缓存数据。
+## 使用说明
 
-## 配置
-
-- settings 命名空间：`llm-pi-ai`（由 harness 的 llm-pi-ai 插件注册）
-- 模型列表：该命名空间下的 `providers[*].models`
-- 推理级别取值：`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`
+无需任何操作，重启 DSH 后插件即自动生效：支持推理级别的模型将会自动填充推理级别，可在界面中选择。
