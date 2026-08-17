@@ -61,6 +61,12 @@ interface ReasoningEntry {
 /** provider/model-id -> 条目 的扁平目录 */
 type Catalog = Record<string, ReasoningEntry>
 
+/** 目录及其预构建的 provider->模型id 分组索引（一次性构建，供 lookup 复用） */
+interface IndexedCatalog {
+    catalog: Catalog
+    groups: Map<string, string[]>
+}
+
 /** 归一化模型 id：去掉供应商后缀、版本日期等噪音，仅保留语义主体 */
 function stem(id: string): string {
     return id
@@ -147,34 +153,32 @@ function toReasoningEfforts(
     return mapped
 }
 
-/** 将 models.dev 原始 JSON 索引为扁平目录 */
-function indexApiJson(api: Record<string, unknown> | undefined): Catalog {
+/** 将 models.dev 原始 JSON 索引为扁平目录，并预构建 provider->模型id 分组索引 */
+function indexApiJson(api: Record<string, unknown> | undefined): IndexedCatalog {
     const catalog: Catalog = {}
+    const groups = new Map<string, string[]>()
     for (const [provider, block] of Object.entries(api ?? {})) {
         if (block == null || typeof block !== 'object') continue
         const models = (block as { models?: unknown }).models
         if (models == null || typeof models !== 'object') continue
+        const ids: string[] = []
         for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
             const parsed = fromApiEntry(entry)
-            if (parsed) catalog[`${provider}/${id}`] = parsed
+            if (parsed) {
+                catalog[`${provider}/${id}`] = parsed
+                ids.push(id)
+            }
         }
+        if (ids.length > 0) groups.set(provider, ids)
     }
-    return catalog
+    return { catalog, groups }
 }
 
-/** 在目录中查找模型条目：先按提示提供商，再按全部提供商依次匹配 */
-function lookup(catalog: Catalog, modelId: string): ReasoningEntry | undefined {
+/** 在索引目录中查找模型条目：先按提示提供商，再按全部提供商依次匹配（分组索引由 indexApiJson 一次性构建） */
+function lookup(indexed: IndexedCatalog, modelId: string): ReasoningEntry | undefined {
+    const { catalog, groups } = indexed
     const bare = modelId.slice(modelId.lastIndexOf('/') + 1)
     const hinted = hintedProvider(bare)
-    const groups = new Map<string, string[]>()
-    for (const key of Object.keys(catalog)) {
-        const slash = key.indexOf('/')
-        const provider = key.slice(0, slash)
-        const id = key.slice(slash + 1)
-        let ids = groups.get(provider)
-        if (!ids) groups.set(provider, (ids = []))
-        ids.push(id)
-    }
     const tryProvider = (provider: string) => {
         const ids = groups.get(provider)
         if (!ids) return
@@ -192,11 +196,14 @@ function lookup(catalog: Catalog, modelId: string): ReasoningEntry | undefined {
     }
 }
 
-// 内存目录：进入插件时优先由缓存加载，异步拉取成功后替换为最新数据
-let catalogCache: Catalog | undefined
+// 常驻空索引：目录尚未可用时的兜底（行为与空目录一致）
+const EMPTY_INDEX: IndexedCatalog = { catalog: {}, groups: new Map() }
 
-/** 从缓存文件加载目录：存在、大小 >= 10KB 且解析成功才算可用（避免写入中途截断误判），否则返回 undefined */
-function readCache(): Catalog | undefined {
+// 内存索引：进入插件时优先由缓存加载，异步拉取成功后替换为最新索引
+let indexedCache: IndexedCatalog | undefined
+
+/** 从缓存文件加载目录索引：存在、大小 >= 10KB 且解析成功才算可用（避免写入中途截断误判），否则返回 undefined */
+function readCache(): IndexedCatalog | undefined {
     try {
         if (statSync(cacheFile).size < CACHE_MIN_BYTES) return
         const cached = JSON.parse(readFileSync(cacheFile, 'utf8')) as Record<string, unknown>
@@ -206,8 +213,8 @@ function readCache(): Catalog | undefined {
     }
 }
 
-/** 拉取 models.dev 最新数据：成功则覆盖缓存文件并返回目录，失败抛出错误（由调用方记录日志） */
-async function fetchLatest(): Promise<Catalog> {
+/** 拉取 models.dev 最新数据：成功则覆盖缓存文件并返回目录索引，失败抛出错误（由调用方记录日志） */
+async function fetchLatest(): Promise<IndexedCatalog> {
     const res = await fetch(API_URL, {
         signal: AbortSignal.timeout(FETCH_MS),
         headers: { 'User-Agent': 'dsh-model-reasoning' },
@@ -228,8 +235,8 @@ async function fill(ctx: Context): Promise<void> {
     const section = ctx.settings.get(NS) as { providers?: Record<string, unknown> } | undefined
     const providers = section?.providers
     if (providers == null || typeof providers !== 'object') return
-    // 使用当前内存目录（无可用数据时为空目录）
-    const catalog = catalogCache ?? {}
+    // 使用当前内存索引（无可用数据时为空索引）
+    const indexed = indexedCache ?? EMPTY_INDEX
     const ops: SettingsPathOp[] = []
     for (const [providerId, provider] of Object.entries(providers)) {
         if (provider == null || typeof provider !== 'object') continue
@@ -241,7 +248,7 @@ async function fill(ctx: Context): Promise<void> {
             const { id, reasoningEfforts } = model as { id?: unknown; reasoningEfforts?: unknown }
             // 已有推理级别或缺少 id 的模型保持原样
             if (id == null || reasoningEfforts !== undefined) return model
-            const efforts = toReasoningEfforts(lookup(catalog, String(id)))
+            const efforts = toReasoningEfforts(lookup(indexed, String(id)))
             if (efforts === undefined) return model
             changed = true
             // 保留其余配置字段，仅补充推理级别
@@ -266,8 +273,8 @@ function runFill(ctx: Context): void {
 /** 异步拉取最新数据：成功后更新内存目录并再次填充，失败记录日志（继续使用现有目录） */
 function refresh(ctx: Context): void {
     fetchLatest()
-        .then((catalog) => {
-            catalogCache = catalog
+        .then((indexed) => {
+            indexedCache = indexed
             runFill(ctx)
         })
         .catch((error) => {
@@ -286,7 +293,7 @@ export function apply(ctx: Context) {
     // 进入插件：缓存可用则立即用缓存填充，随后延迟拉取最新数据并再次填充
     const cached = readCache()
     if (cached) {
-        catalogCache = cached
+        indexedCache = cached
         runFill(ctx)
         // 延迟 5s 拉取，避免与首轮填充的缓存读取/写入冲突；成功后更新缓存并再次填充
         ctx.effect(() => {
