@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
@@ -238,10 +237,10 @@ const EMPTY_INDEX: IndexedCatalog = { catalog: [], groups: new Map() }
 // 内存索引：进入插件时优先由缓存加载，异步拉取成功后替换为最新索引
 let indexedCache: IndexedCatalog | undefined
 
-/** 从缓存文件加载目录：解析结果为非空数组才算可用（旧格式或坏数据一律失效），否则返回 undefined */
-function readCache(): IndexedCatalog | undefined {
+/** 从缓存文件异步加载目录：解析结果为非空数组才算可用（旧格式或坏数据一律失效），否则返回 undefined */
+async function readCache(): Promise<IndexedCatalog | undefined> {
     try {
-        const parsed = JSON.parse(readFileSync(cacheFile, 'utf8')) as unknown
+        const parsed = JSON.parse(await readFile(cacheFile, 'utf8')) as unknown
         if (!Array.isArray(parsed) || parsed.length === 0) return
         return indexFromArray(parsed as CacheEntry[])
     } catch {
@@ -360,20 +359,23 @@ export function apply(ctx: Context) {
         if (ns !== NS) return
         runFill(ctx)
     })
-    // 进入插件：缓存可用则立即用缓存填充
-    const cached = readCache()
-    if (cached) {
-        indexedCache = cached
-        runFill(ctx)
-    }
-    // 刷新统一由 effect 管理：卸载时清除定时器并置位，在途刷新结果不再触碰已卸载的上下文。
-    // 缓存可用时延迟拉取避免与首轮填充冲突；缓存不可用（构建已保留缓存，理论不会发生）则立即拉取
+    // 首轮缓存读取与异步刷新统一由 effect 管理：卸载时置位并清除定时器，在途读取/刷新
+    // 结果不再触碰已卸载的上下文。缓存可用则立即用缓存填充，再延迟拉取避免与首轮填充
+    // 冲突；缓存不可用（构建已保留缓存，理论不会发生）则读完缓存后立即拉取
     ctx.effect(() => {
         let disposed = false
-        const timer = setTimeout(() => refresh(ctx, () => disposed), cached ? REFRESH_DELAY_MS : 0)
+        let timer: ReturnType<typeof setTimeout> | undefined
+        void readCache().then((cached) => {
+            if (disposed) return
+            if (cached) {
+                indexedCache = cached
+                runFill(ctx)
+            }
+            timer = setTimeout(() => refresh(ctx, () => disposed), cached ? REFRESH_DELAY_MS : 0)
+        })
         return () => {
             disposed = true
-            clearTimeout(timer)
+            if (timer !== undefined) clearTimeout(timer)
         }
     })
 }
