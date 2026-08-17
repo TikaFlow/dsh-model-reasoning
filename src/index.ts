@@ -209,24 +209,33 @@ function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, strin
     return mapped
 }
 
-/** 在索引目录中查找模型条目：先按提示提供商，再按全部提供商依次匹配 */
-function lookup(indexed: IndexedCatalog, modelId: string): CacheEntry | undefined {
+/**
+ * 在索引目录中查找模型条目：优先按 provider+modelId 同时匹配（配置的 provider 恰为
+ * 目录提供商时最精确）；失败则仅按 modelId 匹配（先提示提供商，再全部提供商）。
+ */
+function lookup(indexed: IndexedCatalog, providerId: string, modelId: string): CacheEntry | undefined {
     const { groups } = indexed
     const bare = modelId.slice(modelId.lastIndexOf('/') + 1)
-    const hinted = hintedProvider(bare)
-    const tryProvider = (provider: string): CacheEntry | undefined => {
+    const matchIn = (provider: string): CacheEntry | undefined => {
         const group = groups.get(provider)
         if (!group) return
         const hit = matchId(bare, group.ids)
         return hit === undefined ? undefined : group.entries.find((entry) => entry.id === hit)
     }
+    // 第一阶段：配置 provider 精确命中目录时，仅在该 provider 内匹配
+    if (providerId && groups.has(providerId)) {
+        const same = matchIn(providerId)
+        if (same) return same
+    }
+    // 第二阶段：仅按 modelId 全局匹配（先提示提供商，再全部提供商）
+    const hinted = hintedProvider(bare)
     if (hinted) {
-        const official = tryProvider(hinted)
+        const official = matchIn(hinted)
         if (official) return official
     }
     for (const provider of groups.keys()) {
-        if (provider === hinted) continue
-        const hit = tryProvider(provider)
+        if (provider === providerId || provider === hinted) continue
+        const hit = matchIn(provider)
         if (hit) return hit
     }
 }
@@ -304,7 +313,7 @@ async function fill(ctx: Context): Promise<void> {
                 const { id, reasoningEfforts } = model as { id?: unknown; reasoningEfforts?: unknown }
                 // 已有推理级别或缺少 id 的模型保持原样
                 if (id == null || reasoningEfforts !== undefined) continue
-                const efforts = toReasoningEfforts(lookup(indexed, String(id)))
+                const efforts = toReasoningEfforts(lookup(indexed, providerId, String(id)))
                 if (efforts === undefined) continue
                 filled++
                 ops.push({
