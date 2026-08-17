@@ -250,8 +250,9 @@ function readCache(): IndexedCatalog | undefined {
 }
 
 /**
- * 拉取 models.dev 最新数据：解析拍平后覆盖缓存文件并返回目录索引，失败抛出错误
- * （由调用方记录日志）。缓存文件保存处理后数据，启动时无需再次处理。
+ * 拉取 models.dev 最新数据：解析拍平后仅当数据有效（非空）才返回并覆盖缓存；
+ * 内容无变化时跳过写入，避免每次刷新重写相同数据。失败或数据无效抛出错误
+ * （由调用方记录日志），继续使用现有目录。
  */
 async function fetchLatest(): Promise<IndexedCatalog> {
     const res = await fetch(API_URL, {
@@ -261,11 +262,17 @@ async function fetchLatest(): Promise<IndexedCatalog> {
     if (!res.ok) throw new Error(`${API_URL} -> ${res.status}`)
     const api = (await res.json()) as Record<string, unknown>
     const catalog = buildCatalog(api)
-    // 网络获取成功：异步覆盖缓存，避免同步写大文件阻塞事件循环（只读环境写失败则忽略，不影响本次运行）
-    await writeFile(cacheFile, JSON.stringify(catalog)).catch(() => {
-        // 缓存写入是可选的
-    })
-    return indexFromArray(catalog)
+    // 写入保护：数据解析不出可用模型时拒绝空数据，保留现有缓存与内存索引（避免坏响应覆盖好数据）
+    if (catalog.length === 0) throw new Error(`${API_URL} 返回的数据未包含可用的模型推理信息`)
+    const indexed = indexFromArray(catalog)
+    // 内容无变化则跳过重写缓存；异步写避免阻塞事件循环（只读环境写失败则忽略，不影响本次运行）
+    const serialized = JSON.stringify(catalog)
+    if (indexedCache === undefined || serialized !== JSON.stringify(indexedCache.catalog)) {
+        await writeFile(cacheFile, serialized).catch(() => {
+            // 缓存写入是可选的
+        })
+    }
+    return indexed
 }
 
 /** 判断错误是否为并发写入冲突（settings 命名空间在读写之间被改动） */
