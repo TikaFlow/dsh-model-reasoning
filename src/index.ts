@@ -1,4 +1,4 @@
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -39,14 +39,12 @@ interface SettingsPathOp {
 const NS = 'llm-pi-ai'
 const API_URL = 'https://models.dev/api.json'
 const FETCH_MS = 10_000
-// 缓存文件视为可用的最小大小（构建保留的缓存通常远超此值）
-const CACHE_MIN_BYTES = 10 * 1024
 // 异步拉取最新数据的延迟：避免与首轮缓存填充的读取/写入冲突
 const REFRESH_DELAY_MS = 5_000
 // 并发冲突后的填充重试上限：每次重读重算，仍冲突则放弃，交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
 
-// models.dev 缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
+// models.dev 处理后缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
 const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
 
 // 推理级别取值（与 harness 的 ModelThinkingLevel 一致）
@@ -61,20 +59,34 @@ const HINTS: ReadonlyArray<readonly [string, string]> = [
     ['gpt', 'openai'],
 ]
 
-/** 一条模型的推理能力信息（来自 models.dev 条目或本地缓存） */
+/** 一条模型的推理能力信息（来自 models.dev 条目解析的中间形态） */
 interface ReasoningEntry {
     reasoning: boolean
     toggle: boolean
     efforts: string[]
 }
 
-/** provider/model-id -> 条目 的扁平目录 */
-type Catalog = Record<string, ReasoningEntry>
+/** 缓存中的一条模型推理信息：已拍平，仅保留填充所需的 provider/id/efforts */
+interface CacheEntry {
+    provider: string
+    id: string
+    /** 可选推理级别，'none' 表示可关闭推理；已过滤 harness 不支持的取值并统一拼写 */
+    efforts: string[]
+}
 
-/** 目录及其预构建的 provider->模型id 分组索引（一次性构建，供 lookup 复用） */
+/** 拍平缓存：一个大数组，每条为 provider/id/efforts */
+type Catalog = CacheEntry[]
+
+/** 按 provider 分组的内存索引（构建一次，供 lookup 复用） */
+interface ProviderGroup {
+    ids: string[]
+    entries: CacheEntry[]
+}
+
+/** 目录及其预构建的 provider->条目 分组索引 */
 interface IndexedCatalog {
     catalog: Catalog
-    groups: Map<string, string[]>
+    groups: Map<string, ProviderGroup>
 }
 
 /** 归一化模型 id：去掉供应商后缀、版本日期等噪音，仅保留语义主体 */
@@ -140,21 +152,56 @@ function fromApiEntry(entry: unknown): ReasoningEntry | undefined {
 }
 
 /**
- * 将条目转换为 reasoningEfforts 映射（key = 可选等级，value = 实际发送的拼写；
- * 仅 off 允许空值）。返回 false 表示模型不支持推理，undefined 表示无可用信息。
+ * 将 models.dev 原始 JSON 拍平为缓存数组：仅保留有可用推理级别的模型，丢弃非推理
+ * 模型与无级别模型（无推理信息即不填充）；efforts 过滤为 harness 支持的取值并统一
+ * 'off' 拼写为 'none'（可关闭标记），toggle 且无关闭标记时补 'none'。
  */
-function toReasoningEfforts(
-    entry: ReasoningEntry | undefined,
-): Record<string, string | null> | false | undefined {
+function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
+    const catalog: Catalog = []
+    for (const [provider, block] of Object.entries(api ?? {})) {
+        if (block == null || typeof block !== 'object') continue
+        const models = (block as { models?: unknown }).models
+        if (models == null || typeof models !== 'object') continue
+        for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
+            const parsed = fromApiEntry(entry)
+            if (!parsed || !parsed.reasoning) continue
+            const efforts = [
+                ...new Set(
+                    parsed.efforts
+                        .map((effort) => (effort === 'off' ? 'none' : effort))
+                        .filter((effort) => effort === 'none' || LEVELS.has(effort)),
+                ),
+            ]
+            if (parsed.toggle && !efforts.includes('none')) efforts.unshift('none')
+            // 仅有 none（或为空）的模型无法提供推理等级，丢弃
+            if (!efforts.some((effort) => effort !== 'none')) continue
+            catalog.push({ provider, id, efforts })
+        }
+    }
+    return catalog
+}
+
+/** 将拍平缓存数组构建为带 provider 分组索引的目录 */
+function indexFromArray(catalog: Catalog): IndexedCatalog {
+    const groups = new Map<string, ProviderGroup>()
+    for (const entry of catalog) {
+        let group = groups.get(entry.provider)
+        if (!group) groups.set(entry.provider, (group = { ids: [], entries: [] }))
+        group.ids.push(entry.id)
+        group.entries.push(entry)
+    }
+    return { catalog, groups }
+}
+
+/**
+ * 将缓存条目转换为 reasoningEfforts 映射（key = 可选等级，value = 实际发送的拼写；
+ * 仅 off 允许空值）。缓存已过滤非推理模型并规范 efforts，返回 undefined 仅为防御。
+ */
+function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, string | null> | undefined {
     if (!entry) return
-    if (!entry.reasoning) return false
-    const efforts = [...entry.efforts]
-    if (entry.toggle && !efforts.includes('none') && !efforts.includes('off')) efforts.unshift('none')
-    if (efforts.length === 0) return
     const mapped: Record<string, string | null> = {}
-    for (const effort of efforts) {
+    for (const effort of entry.efforts) {
         const level = effort === 'none' ? 'off' : effort
-        if (!LEVELS.has(level)) continue
         mapped[level] = level === 'off' ? null : level
     }
     const keys = Object.keys(mapped)
@@ -163,37 +210,16 @@ function toReasoningEfforts(
     return mapped
 }
 
-/** 将 models.dev 原始 JSON 索引为扁平目录，并预构建 provider->模型id 分组索引 */
-function indexApiJson(api: Record<string, unknown> | undefined): IndexedCatalog {
-    const catalog: Catalog = {}
-    const groups = new Map<string, string[]>()
-    for (const [provider, block] of Object.entries(api ?? {})) {
-        if (block == null || typeof block !== 'object') continue
-        const models = (block as { models?: unknown }).models
-        if (models == null || typeof models !== 'object') continue
-        const ids: string[] = []
-        for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
-            const parsed = fromApiEntry(entry)
-            if (parsed) {
-                catalog[`${provider}/${id}`] = parsed
-                ids.push(id)
-            }
-        }
-        if (ids.length > 0) groups.set(provider, ids)
-    }
-    return { catalog, groups }
-}
-
-/** 在索引目录中查找模型条目：先按提示提供商，再按全部提供商依次匹配（分组索引由 indexApiJson 一次性构建） */
-function lookup(indexed: IndexedCatalog, modelId: string): ReasoningEntry | undefined {
-    const { catalog, groups } = indexed
+/** 在索引目录中查找模型条目：先按提示提供商，再按全部提供商依次匹配 */
+function lookup(indexed: IndexedCatalog, modelId: string): CacheEntry | undefined {
+    const { groups } = indexed
     const bare = modelId.slice(modelId.lastIndexOf('/') + 1)
     const hinted = hintedProvider(bare)
-    const tryProvider = (provider: string) => {
-        const ids = groups.get(provider)
-        if (!ids) return
-        const hit = matchId(bare, ids)
-        return hit ? catalog[`${provider}/${hit}`] : undefined
+    const tryProvider = (provider: string): CacheEntry | undefined => {
+        const group = groups.get(provider)
+        if (!group) return
+        const hit = matchId(bare, group.ids)
+        return hit === undefined ? undefined : group.entries.find((entry) => entry.id === hit)
     }
     if (hinted) {
         const official = tryProvider(hinted)
@@ -207,23 +233,26 @@ function lookup(indexed: IndexedCatalog, modelId: string): ReasoningEntry | unde
 }
 
 // 常驻空索引：目录尚未可用时的兜底（行为与空目录一致）
-const EMPTY_INDEX: IndexedCatalog = { catalog: {}, groups: new Map() }
+const EMPTY_INDEX: IndexedCatalog = { catalog: [], groups: new Map() }
 
 // 内存索引：进入插件时优先由缓存加载，异步拉取成功后替换为最新索引
 let indexedCache: IndexedCatalog | undefined
 
-/** 从缓存文件加载目录索引：存在、大小 >= 10KB 且解析成功才算可用（避免写入中途截断误判），否则返回 undefined */
+/** 从缓存文件加载目录：解析结果为非空数组才算可用（旧格式或坏数据一律失效），否则返回 undefined */
 function readCache(): IndexedCatalog | undefined {
     try {
-        if (statSync(cacheFile).size < CACHE_MIN_BYTES) return
-        const cached = JSON.parse(readFileSync(cacheFile, 'utf8')) as Record<string, unknown>
-        return indexApiJson(cached)
+        const parsed = JSON.parse(readFileSync(cacheFile, 'utf8')) as unknown
+        if (!Array.isArray(parsed) || parsed.length === 0) return
+        return indexFromArray(parsed as CacheEntry[])
     } catch {
         return
     }
 }
 
-/** 拉取 models.dev 最新数据：成功则覆盖缓存文件并返回目录索引，失败抛出错误（由调用方记录日志） */
+/**
+ * 拉取 models.dev 最新数据：解析拍平后覆盖缓存文件并返回目录索引，失败抛出错误
+ * （由调用方记录日志）。缓存文件保存处理后数据，启动时无需再次处理。
+ */
 async function fetchLatest(): Promise<IndexedCatalog> {
     const res = await fetch(API_URL, {
         signal: AbortSignal.timeout(FETCH_MS),
@@ -231,11 +260,12 @@ async function fetchLatest(): Promise<IndexedCatalog> {
     })
     if (!res.ok) throw new Error(`${API_URL} -> ${res.status}`)
     const api = (await res.json()) as Record<string, unknown>
+    const catalog = buildCatalog(api)
     // 网络获取成功：异步覆盖缓存，避免同步写大文件阻塞事件循环（只读环境写失败则忽略，不影响本次运行）
-    await writeFile(cacheFile, JSON.stringify(api)).catch(() => {
+    await writeFile(cacheFile, JSON.stringify(catalog)).catch(() => {
         // 缓存写入是可选的
     })
-    return indexApiJson(api)
+    return indexFromArray(catalog)
 }
 
 /** 判断错误是否为并发写入冲突（settings 命名空间在读写之间被改动） */
