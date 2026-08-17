@@ -289,9 +289,10 @@ function isSettingsConflict(error: unknown): boolean {
 }
 
 /**
- * 遍历配置的模型，判断并填充推理级别，将有变更的模型以定向 op 写回设置。
- * 定向 op 只写单个模型的 reasoningEfforts 字段，避免整段覆写 models 数组冲掉并发改动；
- * 写回时携带描述符 revision，冲突则重读重算，超过上限放弃。
+ * 遍历配置的模型，判断并填充推理级别，将有变更的 provider 以整段 models 数组 op 写回设置。
+ * 注意：settings.mutate 的路径 op 不支持数组下标中继（applyPathOp 只认 plain-object 中间段，
+ * 遇到数组会当作不存在路径重建并替换为对象），因此必须整段写 models 数组——其它模型字段
+ * 原样保留（惰性拷贝），并发安全由写回时携带的 revision 保证：冲突则重读重算，超过上限放弃。
  */
 async function fill(ctx: Context): Promise<void> {
     for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
@@ -307,6 +308,8 @@ async function fill(ctx: Context): Promise<void> {
             if (provider == null || typeof provider !== 'object') continue
             const models = (provider as { models?: unknown }).models
             if (!Array.isArray(models)) continue
+            // 惰性拷贝：仅当本 provider 存在待填充模型时才复制数组，避免无变更时白白分配
+            let next: Record<string, unknown>[] | undefined
             for (let i = 0; i < models.length; i++) {
                 const model = models[i]
                 if (model == null || typeof model !== 'object') continue
@@ -316,11 +319,12 @@ async function fill(ctx: Context): Promise<void> {
                 const efforts = toReasoningEfforts(lookup(indexed, providerId, String(id)))
                 if (efforts === undefined) continue
                 filled++
-                ops.push({
-                    op: 'set',
-                    path: ['providers', providerId, 'models', String(i), 'reasoningEfforts'],
-                    value: efforts,
-                })
+                if (next === undefined) next = models.slice()
+                // 保留其余配置字段，仅补充推理级别
+                next[i] = { ...(model as Record<string, unknown>), reasoningEfforts: efforts }
+            }
+            if (next !== undefined) {
+                ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
             }
         }
         if (ops.length === 0) return
