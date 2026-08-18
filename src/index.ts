@@ -44,6 +44,8 @@ const FETCH_MS = 10_000
 const REFRESH_DELAY_MS = 5_000
 // 并发冲突后的填充重试上限：每次重读重算，仍冲突则放弃，交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
+// 是否允许在已有推理级别时以最新数据为准更新档位；默认 false（无配置项 = false），后续改为读取配置
+const ALLOW_LEVEL_UPDATE = 1 === 2 as unknown
 
 // models.dev 处理后缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
 const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
@@ -211,6 +213,28 @@ function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, strin
     return mapped
 }
 
+/** 是否为一个普通数据对象（非数组、非 null、非类实例） */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const proto: unknown = Object.getPrototypeOf(value)
+    return proto === Object.prototype || proto === null
+}
+
+/** JSON 兼容数据的深相等（忽略键顺序），供更新档位时比较，避免键序触发无谓写回 */
+function deepEqualJson(a: unknown, b: unknown): boolean {
+    if (a === b) return true
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+    if (Array.isArray(a) || Array.isArray(b)) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+        return a.every((entry, i) => deepEqualJson(entry, b[i]))
+    }
+    const left = a as Record<string, unknown>
+    const right = b as Record<string, unknown>
+    const keys = Object.keys(left)
+    if (keys.length !== Object.keys(right).length) return false
+    return keys.every((key) => key in right && deepEqualJson(left[key], right[key]))
+}
+
 /**
  * 返回剔除空 input/compat 后的模型副本；无空字段时返回原对象（惰性，供 fill 写回复用）。
  * 旧版插件从 descriptor.value 读模型并整段写回，而 value 已被 schemastery 物化默认值：
@@ -312,23 +336,21 @@ function isSettingsConflict(error: unknown): boolean {
 }
 
 /**
- * 遍历配置的模型，补充推理级别并顺带清理旧版插件遗留的空字段，将有变更的 provider 以整段
- * models 数组 op 写回设置。读取 descriptor.user（原始 section）而非 value：value 已被
- * schemastery 物化默认值（缺失 input→[]、compat→{}），整段写回会把它们带进设置文档；
- * user 只含用户写入字段，写回即"用户字段 + reasoningEfforts"。清理幂等：空字段一次清理后
- * 不会重现（本插件与 harness UI 都按 user 写回，不再物化它们），故无需区分是否首次进入，
- * 后续扫描自然 changes 为 0。注意：settings.mutate 的路径 op 不支持数组下标中继（applyPathOp
- * 只认 plain-object 中间段，遇到数组会当作不存在路径重建并替换为对象），因此必须整段写
- * models 数组——其它模型字段原样保留（惰性拷贝），并发安全由写回时携带的 revision 保证：
- * 冲突则重读重算，超过上限放弃。
+ * 遍历配置的模型并写回变更：缺失推理级别且数据有档位则填充，已开启允许更新则同步到最新
+ * 数据，并顺带剔除旧版遗留的空 input/compat。读取 descriptor.user（原始字段，不含 value
+ * 物化的空默认值），整段写回 models 数组（路径 op 不支持数组下标中继）。reasoningEfforts:false
+ * 永远不更新，数据无档位时不删除已有配置。并发冲突重读重算，超过上限放弃。开启允许更新后
+ * 数据即为准，任何手动档位在下次 settings 变更后都可能被回滚。
  */
-async function fill(ctx: Context): Promise<void> {
+async function update(ctx: Context): Promise<void> {
+    let lastError: unknown
     for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
+        // 冲突重试时重读，获取最新 revision 以做并发冲突校验
         const descriptor = ctx.settings.describe().find((d) => d.ns === NS)
         if (!descriptor) return
         const providers = (descriptor.user as { providers?: Record<string, unknown> } | undefined)?.providers
         if (providers == null || typeof providers !== 'object') return
-        // 使用当前内存索引（无可用数据时为空索引）
+        const allowUpdate = ALLOW_LEVEL_UPDATE
         const indexed = indexedCache ?? EMPTY_INDEX
         const ops: SettingsPathOp[] = []
         let changes = 0
@@ -336,26 +358,24 @@ async function fill(ctx: Context): Promise<void> {
             if (provider == null || typeof provider !== 'object') continue
             const models = (provider as { models?: unknown }).models
             if (!Array.isArray(models)) continue
-            // 惰性拷贝：仅当本 provider 存在待变更模型时才复制数组，避免无变更时白白分配
             let next: Record<string, unknown>[] | undefined
             for (let i = 0; i < models.length; i++) {
                 const model = models[i]
                 if (model == null || typeof model !== 'object') continue
                 const record = model as Record<string, unknown>
                 const { id, reasoningEfforts } = record as { id?: unknown; reasoningEfforts?: unknown }
-                // 缺少 id 的模型保持原样：无法填充，也无从（也不必）清理
                 if (id == null) continue
-                // 先剔除旧版插件遗留的空字段（input: []/compat: {}，等同缺失，删除无损）
                 const cleaned = stripEmptyArtifacts(record)
-                // 已有推理级别则不再填充
-                const efforts = reasoningEfforts === undefined
-                    ? toReasoningEfforts(lookup(indexed, providerId, String(id)))
-                    : undefined
-                if (cleaned === record && efforts === undefined) continue
+                const efforts = toReasoningEfforts(lookup(indexed, providerId, String(id)))
+                const fillable = reasoningEfforts === undefined && efforts !== undefined
+                const updatable = allowUpdate
+                    && efforts !== undefined
+                    && isPlainObject(reasoningEfforts)
+                    && !deepEqualJson(reasoningEfforts, efforts)
+                if (cleaned === record && !fillable && !updatable) continue
                 changes++
                 if (next === undefined) next = models.slice()
-                // 保留用户原始字段，仅补充推理级别/剔除空字段
-                next[i] = efforts === undefined ? cleaned : { ...cleaned, reasoningEfforts: efforts }
+                next[i] = (fillable || updatable) ? { ...cleaned, reasoningEfforts: efforts } : cleaned
             }
             if (next !== undefined) {
                 ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
@@ -364,21 +384,15 @@ async function fill(ctx: Context): Promise<void> {
         if (ops.length === 0) return
         try {
             await ctx.settings.mutate(NS, ops, descriptor.revision)
-            ctx.logger?.info?.(`${name}: 已变更 ${changes} 个模型（补充推理级别/清理空字段）`)
+            ctx.logger?.info?.(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、清理空字段）`)
             return
         } catch (error) {
-            // 并发冲突：重读重算一轮；仍冲突则抛出，由 runFill 记录日志
-            if (isSettingsConflict(error) && attempt < FILL_MAX_ATTEMPTS) continue
-            throw error
+            const conflict = isSettingsConflict(error) && attempt < FILL_MAX_ATTEMPTS
+            if (conflict) continue
+            ctx.logger?.warn?.(`${name}: ${error instanceof Error ? error.message : String(error)}`)
+            return
         }
     }
-}
-
-/** 执行一轮填充并统一记录失败日志 */
-function runFill(ctx: Context): void {
-    fill(ctx).catch((error) => {
-        ctx.logger?.warn?.(`${name}: ${error instanceof Error ? error.message : String(error)}`)
-    })
 }
 
 /**
@@ -390,7 +404,7 @@ function refresh(ctx: Context, isDisposed: () => boolean): void {
         .then((indexed) => {
             if (isDisposed()) return
             indexedCache = indexed
-            runFill(ctx)
+            update(ctx)
         })
         .catch((error) => {
             if (isDisposed()) return
@@ -401,10 +415,10 @@ function refresh(ctx: Context, isDisposed: () => boolean): void {
 }
 
 export function apply(ctx: Context) {
-    // 模型配置更新遍历填充
+    // 模型配置更新触发更新
     ctx.on('settings/updated', (ns) => {
         if (ns !== NS) return
-        runFill(ctx)
+        update(ctx)
     })
     // 首轮缓存读取与异步刷新统一由 effect 管理：卸载时置位并清除定时器，在途读取/刷新
     // 结果不再触碰已卸载的上下文。缓存可用则立即用缓存填充，再延迟拉取避免与首轮填充
@@ -416,7 +430,7 @@ export function apply(ctx: Context) {
             if (disposed) return
             if (cached) {
                 indexedCache = cached
-                runFill(ctx)
+                update(ctx)
             }
             timer = setTimeout(() => refresh(ctx, () => disposed), cached ? REFRESH_DELAY_MS : 0)
         })
