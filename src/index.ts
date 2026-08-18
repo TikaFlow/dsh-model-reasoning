@@ -21,11 +21,13 @@ interface SettingsService {
     mutate(ns: string, ops: readonly SettingsPathOp[], expectedRevision?: number): Promise<void>
 }
 
-/** 命名空间描述符：value 为当前解析值，revision 供写回时做并发冲突校验 */
+/** 命名空间描述符：value 为当前解析值，user 为原始用户 section，revision 供写回时做并发冲突校验 */
 interface SettingsDescriptor {
     ns: string
     revision: number
     value: unknown
+    /** 原始用户 section（detach 拷贝，字段仅含用户写入项）；无用户 section 时为 undefined */
+    user?: unknown
 }
 
 interface SettingsPathOp {
@@ -210,6 +212,27 @@ function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, strin
 }
 
 /**
+ * 返回剔除空 input/compat 后的模型副本；无空字段时返回原对象（惰性，供 fill 写回复用）。
+ * 旧版插件从 descriptor.value 读模型并整段写回，而 value 已被 schemastery 物化默认值：
+ * 缺失的 input 变成 []、compat 变成 {}，于是这些空字段落进了用户的设置文档。两者在 harness
+ * 语义上等同缺失（空 input 被当作未声明、空 compat 读不到任何开关），删除无损，故可安全清理。
+ * 填充改为读 user 后不再产生此类空字段，因此清理幂等：遗留字段清一次后不会重现。
+ */
+function stripEmptyArtifacts(model: Record<string, unknown>): Record<string, unknown> {
+    let next: Record<string, unknown> | undefined
+    if (Array.isArray(model['input']) && model['input'].length === 0) {
+        next = { ...model }
+        delete next['input']
+    }
+    const compat = model['compat']
+    if (compat != null && typeof compat === 'object' && !Array.isArray(compat) && Object.keys(compat).length === 0) {
+        next ??= { ...model }
+        delete next['compat']
+    }
+    return next ?? model
+}
+
+/**
  * 在索引目录中查找模型条目：优先按 provider+modelId 同时匹配（配置的 provider 恰为
  * 目录提供商时最精确）；失败则仅按 modelId 匹配（先提示提供商，再全部提供商）。
  */
@@ -289,39 +312,50 @@ function isSettingsConflict(error: unknown): boolean {
 }
 
 /**
- * 遍历配置的模型，判断并填充推理级别，将有变更的 provider 以整段 models 数组 op 写回设置。
- * 注意：settings.mutate 的路径 op 不支持数组下标中继（applyPathOp 只认 plain-object 中间段，
- * 遇到数组会当作不存在路径重建并替换为对象），因此必须整段写 models 数组——其它模型字段
- * 原样保留（惰性拷贝），并发安全由写回时携带的 revision 保证：冲突则重读重算，超过上限放弃。
+ * 遍历配置的模型，补充推理级别并顺带清理旧版插件遗留的空字段，将有变更的 provider 以整段
+ * models 数组 op 写回设置。读取 descriptor.user（原始 section）而非 value：value 已被
+ * schemastery 物化默认值（缺失 input→[]、compat→{}），整段写回会把它们带进设置文档；
+ * user 只含用户写入字段，写回即"用户字段 + reasoningEfforts"。清理幂等：空字段一次清理后
+ * 不会重现（本插件与 harness UI 都按 user 写回，不再物化它们），故无需区分是否首次进入，
+ * 后续扫描自然 changes 为 0。注意：settings.mutate 的路径 op 不支持数组下标中继（applyPathOp
+ * 只认 plain-object 中间段，遇到数组会当作不存在路径重建并替换为对象），因此必须整段写
+ * models 数组——其它模型字段原样保留（惰性拷贝），并发安全由写回时携带的 revision 保证：
+ * 冲突则重读重算，超过上限放弃。
  */
 async function fill(ctx: Context): Promise<void> {
     for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
         const descriptor = ctx.settings.describe().find((d) => d.ns === NS)
         if (!descriptor) return
-        const providers = (descriptor.value as { providers?: Record<string, unknown> } | undefined)?.providers
+        const providers = (descriptor.user as { providers?: Record<string, unknown> } | undefined)?.providers
         if (providers == null || typeof providers !== 'object') return
         // 使用当前内存索引（无可用数据时为空索引）
         const indexed = indexedCache ?? EMPTY_INDEX
         const ops: SettingsPathOp[] = []
-        let filled = 0
+        let changes = 0
         for (const [providerId, provider] of Object.entries(providers)) {
             if (provider == null || typeof provider !== 'object') continue
             const models = (provider as { models?: unknown }).models
             if (!Array.isArray(models)) continue
-            // 惰性拷贝：仅当本 provider 存在待填充模型时才复制数组，避免无变更时白白分配
+            // 惰性拷贝：仅当本 provider 存在待变更模型时才复制数组，避免无变更时白白分配
             let next: Record<string, unknown>[] | undefined
             for (let i = 0; i < models.length; i++) {
                 const model = models[i]
                 if (model == null || typeof model !== 'object') continue
-                const { id, reasoningEfforts } = model as { id?: unknown; reasoningEfforts?: unknown }
-                // 已有推理级别或缺少 id 的模型保持原样
-                if (id == null || reasoningEfforts !== undefined) continue
-                const efforts = toReasoningEfforts(lookup(indexed, providerId, String(id)))
-                if (efforts === undefined) continue
-                filled++
+                const record = model as Record<string, unknown>
+                const { id, reasoningEfforts } = record as { id?: unknown; reasoningEfforts?: unknown }
+                // 缺少 id 的模型保持原样：无法填充，也无从（也不必）清理
+                if (id == null) continue
+                // 先剔除旧版插件遗留的空字段（input: []/compat: {}，等同缺失，删除无损）
+                const cleaned = stripEmptyArtifacts(record)
+                // 已有推理级别则不再填充
+                const efforts = reasoningEfforts === undefined
+                    ? toReasoningEfforts(lookup(indexed, providerId, String(id)))
+                    : undefined
+                if (cleaned === record && efforts === undefined) continue
+                changes++
                 if (next === undefined) next = models.slice()
-                // 保留其余配置字段，仅补充推理级别
-                next[i] = { ...(model as Record<string, unknown>), reasoningEfforts: efforts }
+                // 保留用户原始字段，仅补充推理级别/剔除空字段
+                next[i] = efforts === undefined ? cleaned : { ...cleaned, reasoningEfforts: efforts }
             }
             if (next !== undefined) {
                 ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
@@ -330,7 +364,7 @@ async function fill(ctx: Context): Promise<void> {
         if (ops.length === 0) return
         try {
             await ctx.settings.mutate(NS, ops, descriptor.revision)
-            ctx.logger?.info?.(`${name}: 已为 ${filled} 个模型填充推理级别`)
+            ctx.logger?.info?.(`${name}: 已变更 ${changes} 个模型（补充推理级别/清理空字段）`)
             return
         } catch (error) {
             // 并发冲突：重读重算一轮；仍冲突则抛出，由 runFill 记录日志
