@@ -44,8 +44,8 @@ const FETCH_MS = 10_000
 const REFRESH_DELAY_MS = 5_000
 // 并发冲突后的填充重试上限：每次重读重算，仍冲突则放弃，交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
-// 是否允许在已有推理级别时以最新数据为准更新档位；默认 false（无配置项 = false），后续改为读取配置
-const ALLOW_LEVEL_UPDATE = 1 === 2 as unknown
+// 是否允许在已有推理级别时以最新数据为准更新档位；默认 false，后续改为读取配置
+const ALLOW_LEVEL_UPDATE = false as boolean
 
 // models.dev 处理后缓存文件：基于本模块自身路径定位，构建时由 public/ 复制到产物目录；网络拉取成功时覆盖
 const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
@@ -92,12 +92,14 @@ interface IndexedCatalog {
     groups: Map<string, ProviderGroup>
 }
 
+/** 归一化模型 id：去前后缀、版本日期，已供 stem/matchId 复用 */
+function normalizeId(id: string): string {
+    return id.toLowerCase().replace(/-openai-compact$/, '').replace(/-latest$/, '')
+}
+
 /** 归一化模型 id：去掉供应商后缀、版本日期等噪音，仅保留语义主体 */
 function stem(id: string): string {
-    return id
-        .toLowerCase()
-        .replace(/-openai-compact$/, '')
-        .replace(/-latest$/, '')
+    return normalizeId(id)
         .replace(/-\d{8}$/, '')
         .split('-')
         .filter((part) => !/^\d{4,}$/.test(part))
@@ -106,10 +108,7 @@ function stem(id: string): string {
 
 /** 将本地模型 id 与目录中的某个模型 id 匹配（精确、词干、前缀三级） */
 function matchId(localId: string, ids: readonly string[]): string | undefined {
-    const normalized = localId
-        .toLowerCase()
-        .replace(/-openai-compact$/, '')
-        .replace(/-latest$/, '')
+    const normalized = normalizeId(localId)
     if (ids.includes(normalized)) return normalized
     if (!normalized.includes('-') && !normalized.includes('.')) return
     const localStem = stem(normalized)
@@ -244,14 +243,15 @@ function deepEqualJson(a: unknown, b: unknown): boolean {
  */
 function stripEmptyArtifacts(model: Record<string, unknown>): Record<string, unknown> {
     let next: Record<string, unknown> | undefined
-    if (Array.isArray(model['input']) && model['input'].length === 0) {
+    const input = model.input
+    if (Array.isArray(input) && input.length === 0) {
         next = { ...model }
-        delete next['input']
+        delete next.input
     }
-    const compat = model['compat']
+    const compat = model.compat
     if (compat != null && typeof compat === 'object' && !Array.isArray(compat) && Object.keys(compat).length === 0) {
         next ??= { ...model }
-        delete next['compat']
+        delete next.compat
     }
     return next ?? model
 }
@@ -343,7 +343,6 @@ function isSettingsConflict(error: unknown): boolean {
  * 数据即为准，任何手动档位在下次 settings 变更后都可能被回滚。
  */
 async function update(ctx: Context): Promise<void> {
-    let lastError: unknown
     for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
         // 冲突重试时重读，获取最新 revision 以做并发冲突校验
         const descriptor = ctx.settings.describe().find((d) => d.ns === NS)
