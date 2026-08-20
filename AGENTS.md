@@ -22,12 +22,14 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 
 ## 核心逻辑
 
+- **自有配置（`model-reasoning` 命名空间）**：通过 `installSettingsSection` 注册到 settings，可在 `settings.yaml` 中编辑或将来通过 Web 设置页开关控制；当前配置项 `allowUpdate: boolean`（默认 `false`），开启后以 models.dev 最新数据为准更新已有推理级别档位
 - 数据加载（`readCache` / `fetchLatest`）：缓存为 models.dev 处理后拍平数组（每条 provider/id/efforts，已过滤非推理模型与无可用级别的模型，efforts 含 `none` 表示可关闭推理）；`readCache`（异步读取）校验解析结果为非空数组即构建分组索引（旧格式或坏数据一律失效，交由网络拉取自愈）；缓存可用则立即用缓存填充，再延迟 5s 异步拉取 models.dev 原始 JSON（解析拍平后仅当数据非空才替换内存索引并覆盖缓存，内容无变化则跳过写入；失败或数据无效仅记录日志、继续使用现有目录）；缓存不可用（理论上不会发生，构建已保留缓存）则直接拉取最新数据填充并更新缓存；目录以内存常驻形式供每次填充复用，首次由缓存或网络初始化，此后仅被异步刷新结果整体替换
 - 填充流程（`fill`）：读取 settings 命名空间 `llm-pi-ai` 的 `providers[*].models` 及描述符 revision，对缺少 `reasoningEfforts` 的模型查找目录（`lookup` 优先按 provider+modelId 匹配，失败再仅按 modelId 全局匹配），生成推理级别并以定向 op 只写单个模型的 `reasoningEfforts` 字段；写回携带 revision 做并发冲突校验，冲突时重读重算（限次）
 - 生命周期（`apply`）：`inject: ['settings']` 保证服务已就绪；`settings/updated` 事件监听配置变更后再次填充；首轮缓存读取与异步刷新统一由 effect 管理（异步读到缓存后立即用缓存填充并延后拉取最新数据；卸载时置位并清除定时器，在途读取/刷新结果不再触碰已卸载的上下文）
 
 ## 配置说明
 
+- 自有配置命名空间为 `model-reasoning`（由本插件通过 `installSettingsSection` 注册），在 settings 文件的 `model-reasoning` section 中配置，如 `model-reasoning: { allowUpdate: true }`；后续可为其注册浏览器设置卡片，在 Web 设置页「插件配置」tab 展示开关
 - settings 命名空间为 `llm-pi-ai`（由 harness 的 llm-pi-ai 插件注册），模型列表即该命名空间下的 `providers` 配置
 - 推理级别取值与 harness 的 `ModelThinkingLevel` 一致：`off` / `minimal` / `low` / `medium` / `high` / `xhigh` / `max`
 
@@ -35,3 +37,4 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 
 - `pnpm build`：构建到 `lib/`
 - `pnpm run typecheck`：tsc 类型检查
+- `pnpm install`：安装依赖（`prepare` 钩子自动执行 `pnpm build`，故 `lib/` 在安装后即存在）

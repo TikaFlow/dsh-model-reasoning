@@ -8,6 +8,7 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 - 延迟 5 秒异步拉取 models.dev 最新数据：成功则更新缓存并再次填充；失败则记录日志，继续使用现有目录
 - 监听 `settings/updated` 事件，模型配置变更后自动重新填充
 - 仅填充缺少 `reasoningEfforts` 的模型，已有配置不受影响
+- 支持通过自有配置控制行为：`allowUpdate` 开启后，以 models.dev 最新数据为准同步已有模型的推理级别档位
 
 ## 安装
 
@@ -18,3 +19,13 @@ dsh plugin --profile web add github:TikaFlow/dsh-model-reasoning
 ## 使用说明
 
 无需任何操作，重启 DSH 后插件即自动生效：支持推理级别的模型将会自动填充推理级别，可在界面中选择。
+
+### 配置
+
+在 DSH 的 `settings.yaml` 中通过 `model-reasoning` section 配置本插件：
+
+```yaml
+model-reasoning:
+  # 开启后以 models.dev 最新数据为准更新已有推理级别档位；默认 false
+  allowUpdate: true
+```
