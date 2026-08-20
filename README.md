@@ -22,9 +22,10 @@ dsh plugin --profile web add github:TikaFlow/dsh-model-reasoning
 
 ### 配置
 
-在 DSH 的 `settings.yaml` 中通过 `model-reasoning` section 配置本插件：
+在 Web 设置界面右上角点击「打开配置文件 / Open configuration file」直接编辑 `settings.yaml`，在文件末尾添加：
 
 ```yaml
+# 建议直接复制，注意开头不要有空格
 model-reasoning:
   # 开启后以 models.dev 最新数据为准更新已有推理级别档位；默认 false
   allowUpdate: true
