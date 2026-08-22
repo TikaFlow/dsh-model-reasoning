@@ -359,7 +359,10 @@ function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEM
         .then((indexed) => {
             if (isDisposed()) return
             indexedCache = indexed
-            update(ctx)
+            update(ctx).catch((error) => {
+                if (isDisposed()) return
+                ctx.logger?.warn?.(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
+            })
         })
         .catch((error) => {
             if (isDisposed()) return
@@ -399,10 +402,15 @@ export function apply(ctx: Context) {
             if (cached) {
                 indexedCache = cached
                 // 首轮填充完成后才拉取最新数据，避免两次写入并发冲突
-                update(ctx).then(() => {
-                    if (disposed) return
-                    refresh(ctx, () => disposed)
-                })
+                update(ctx)
+                    .finally(() => {
+                        if (disposed) return
+                        refresh(ctx, () => disposed)
+                    })
+                    .catch((error) => {
+                        if (disposed) return
+                        ctx.logger?.warn?.(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
+                    })
             } else {
                 // 缓存不可用，直接拉取最新数据
                 refresh(ctx, () => disposed)
