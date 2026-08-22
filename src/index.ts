@@ -15,6 +15,9 @@ const NS = settingsNamespace('llm-pi-ai')
 const MY_NS = settingsNamespace('model-reasoning')
 const API_URL = 'https://models.dev/api.json'
 const FETCH_MS = 10_000
+// 拉取失败重试：总尝试次数与固定重试间隔
+const FETCH_MAX_ATTEMPTS = 3
+const FETCH_RETRY_DELAY_MS = 5_000
 // 并发冲突重试上限，超出后放弃、交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
 
@@ -343,7 +346,7 @@ async function update(ctx: Context): Promise<void> {
 }
 
 /** 异步拉取最新数据：成功后更新索引并再次填充；isDisposed 避免结果触碰已卸载上下文 */
-function refresh(ctx: Context, isDisposed: () => boolean): void {
+function refresh(ctx: Context, isDisposed: () => boolean, retryCount = FETCH_MAX_ATTEMPTS): void {
     fetchLatest()
         .then((indexed) => {
             if (isDisposed()) return
@@ -355,6 +358,12 @@ function refresh(ctx: Context, isDisposed: () => boolean): void {
             ctx.logger?.warn?.(
                 `${name}: 拉取 models.dev 最新数据失败，继续使用现有目录（${error instanceof Error ? error.message : String(error)}）`,
             )
+            // 剩余重试次数不足则放弃，交由后续事件或重启再触发
+            if (--retryCount <= 0) return
+            setTimeout(() => {
+                if (isDisposed()) return
+                refresh(ctx, isDisposed, retryCount)
+            }, FETCH_RETRY_DELAY_MS)
         })
 }
 
