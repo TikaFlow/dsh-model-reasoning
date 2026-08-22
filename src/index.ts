@@ -280,7 +280,7 @@ async function fetchLatest(ctx: Context): Promise<IndexedCatalog> {
                 break
             } catch (error) {
                 // 每次失败都记录，便于判断是一次成功还是重试后才成功
-                ctx.logger?.warn?.(
+                ctx.logger.warn(
                     `${name}: 写入缓存失败（第 ${attempt}/${MAX_ATTEMPTS} 次）：${error instanceof Error ? error.message : String(error)}`,
                 )
                 if (attempt < MAX_ATTEMPTS) {
@@ -343,12 +343,12 @@ async function update(ctx: Context): Promise<void> {
         if (ops.length === 0) return
         try {
             await ctx.settings.mutate(NS, ops, descriptor.revision)
-            ctx.logger?.info?.(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、清理空字段）`)
+            ctx.logger.info(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、清理空字段）`)
             return
         } catch (error) {
             const conflict = isSettingsConflict(error) && attempt < MAX_ATTEMPTS
             if (conflict) continue
-            ctx.logger?.warn?.(`${name}: ${error instanceof Error ? error.message : String(error)}`)
+            ctx.logger.warn(`${name}: ${error instanceof Error ? error.message : String(error)}`)
             return
         }
     }
@@ -362,14 +362,14 @@ function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEM
             indexedCache = indexed
             update(ctx).catch((error) => {
                 if (isDisposed()) return
-                ctx.logger?.warn?.(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
+                ctx.logger.warn(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
             })
         })
         .catch((error) => {
             if (isDisposed()) return
             // 每次失败都记录，便于判断是一次成功还是重试后才成功
             const attempt = MAX_ATTEMPTS - retryCount + 1
-            ctx.logger?.warn?.(
+            ctx.logger.warn(
                 `${name}: 拉取 models.dev 最新数据失败（第 ${attempt}/${MAX_ATTEMPTS} 次）：${error instanceof Error ? error.message : String(error)}`,
             )
             // 剩余重试次数不足则放弃，交由后续事件或重启再触发
@@ -410,7 +410,7 @@ export function apply(ctx: Context) {
                     })
                     .catch((error) => {
                         if (disposed) return
-                        ctx.logger?.warn?.(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
+                        ctx.logger.warn(`${name}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
                     })
             } else {
                 // 缓存不可用，直接拉取最新数据
