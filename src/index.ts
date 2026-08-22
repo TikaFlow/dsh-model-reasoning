@@ -15,11 +15,9 @@ const NS = settingsNamespace('llm-pi-ai')
 const MY_NS = settingsNamespace('model-reasoning')
 const API_URL = 'https://models.dev/api.json'
 const FETCH_MS = 10_000
-// 拉取与缓存写入共用的失败重试：总尝试次数与固定重试间隔
+// 拉取、缓存写入与填充冲突共用的总尝试次数；固定重试间隔用于拉取与缓存写入
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 5_000
-// 并发冲突重试上限，超出后放弃、交由后续事件再触发
-const FILL_MAX_ATTEMPTS = 2
 
 // 自有配置：allowUpdate 开启后以最新数据为准更新已有档位
 interface MyConfig {
@@ -304,7 +302,7 @@ function isSettingsConflict(error: unknown): boolean {
  * 不支持数组下标中继）；reasoningEfforts:false 永不更新，数据无档位不删除已有配置。
  */
 async function update(ctx: Context): Promise<void> {
-    for (let attempt = 0; attempt <= FILL_MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // 冲突重试时重读，获取最新 revision
         const descriptor = ctx.settings.describe().find((d) => d.ns === NS)
         if (!descriptor) return
@@ -347,7 +345,7 @@ async function update(ctx: Context): Promise<void> {
             ctx.logger?.info?.(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、清理空字段）`)
             return
         } catch (error) {
-            const conflict = isSettingsConflict(error) && attempt < FILL_MAX_ATTEMPTS
+            const conflict = isSettingsConflict(error) && attempt < MAX_ATTEMPTS
             if (conflict) continue
             ctx.logger?.warn?.(`${name}: ${error instanceof Error ? error.message : String(error)}`)
             return
