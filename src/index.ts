@@ -15,9 +15,9 @@ const NS = settingsNamespace('llm-pi-ai')
 const MY_NS = settingsNamespace('model-reasoning')
 const API_URL = 'https://models.dev/api.json'
 const FETCH_MS = 10_000
-// 拉取失败重试：总尝试次数与固定重试间隔
-const FETCH_MAX_ATTEMPTS = 3
-const FETCH_RETRY_DELAY_MS = 5_000
+// 拉取与缓存写入共用的失败重试：总尝试次数与固定重试间隔
+const MAX_ATTEMPTS = 3
+const RETRY_DELAY_MS = 5_000
 // 并发冲突重试上限，超出后放弃、交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
 
@@ -263,7 +263,7 @@ async function readCache(): Promise<IndexedCatalog | undefined> {
 }
 
 /** 拉取 models.dev 最新数据：数据非空才返回并覆盖缓存；内容无变化跳过写入。失败抛出由调用方记录日志 */
-async function fetchLatest(): Promise<IndexedCatalog> {
+async function fetchLatest(ctx: Context): Promise<IndexedCatalog> {
     const res = await fetch(API_URL, {
         signal: AbortSignal.timeout(FETCH_MS),
         headers: { 'User-Agent': 'dsh-model-reasoning' },
@@ -276,9 +276,20 @@ async function fetchLatest(): Promise<IndexedCatalog> {
     const indexed = indexFromArray(catalog)
     const serialized = JSON.stringify(catalog)
     if (indexedCache === undefined || serialized !== JSON.stringify(indexedCache.catalog)) {
-        await writeFile(cacheFile, serialized).catch(() => {
-            // 缓存写入失败不影响本次运行
-        })
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                await writeFile(cacheFile, serialized)
+                break
+            } catch (error) {
+                // 每次失败都记录，便于判断是一次成功还是重试后才成功
+                ctx.logger?.warn?.(
+                    `${name}: 写入缓存失败（第 ${attempt}/${MAX_ATTEMPTS} 次）：${error instanceof Error ? error.message : String(error)}`,
+                )
+                if (attempt < MAX_ATTEMPTS) {
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+                }
+            }
+        }
     }
     return indexed
 }
@@ -346,8 +357,8 @@ async function update(ctx: Context): Promise<void> {
 }
 
 /** 异步拉取最新数据：成功后更新索引并再次填充；isDisposed 避免结果触碰已卸载上下文 */
-function refresh(ctx: Context, isDisposed: () => boolean, retryCount = FETCH_MAX_ATTEMPTS): void {
-    fetchLatest()
+function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEMPTS): void {
+    fetchLatest(ctx)
         .then((indexed) => {
             if (isDisposed()) return
             indexedCache = indexed
@@ -355,15 +366,17 @@ function refresh(ctx: Context, isDisposed: () => boolean, retryCount = FETCH_MAX
         })
         .catch((error) => {
             if (isDisposed()) return
+            // 每次失败都记录，便于判断是一次成功还是重试后才成功
+            const attempt = MAX_ATTEMPTS - retryCount + 1
             ctx.logger?.warn?.(
-                `${name}: 拉取 models.dev 最新数据失败，继续使用现有目录（${error instanceof Error ? error.message : String(error)}）`,
+                `${name}: 拉取 models.dev 最新数据失败（第 ${attempt}/${MAX_ATTEMPTS} 次）：${error instanceof Error ? error.message : String(error)}`,
             )
             // 剩余重试次数不足则放弃，交由后续事件或重启再触发
             if (--retryCount <= 0) return
             setTimeout(() => {
                 if (isDisposed()) return
                 refresh(ctx, isDisposed, retryCount)
-            }, FETCH_RETRY_DELAY_MS)
+            }, RETRY_DELAY_MS)
         })
 }
 
