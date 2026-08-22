@@ -98,7 +98,6 @@ function matchId(localId: string, ids: readonly string[]): string | undefined {
     const localStem = stem(normalized)
     const stemHits = ids.filter((id) => stem(id) === localStem)
     if (stemHits.length === 1) return stemHits[0]
-    if (stemHits.includes(normalized)) return normalized
     const prefix = ids.filter((id) => id.startsWith(`${normalized}-`) || id.startsWith(`${normalized}.`))
     if (prefix.length === 1) return prefix[0]
 }
