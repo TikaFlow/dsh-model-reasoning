@@ -74,7 +74,7 @@ interface IndexedCatalog {
     groups: Map<string, ProviderGroup>
 }
 
-/** 归一化模型 id：去版本日期等噪音，供 stem/matchId 复用 */
+/** 归一化模型 id：小写并去 -latest / -openai-compact 后缀噪音 */
 function normalizeId(id: string): string {
     return id.toLowerCase().replace(/-openai-compact$/, '').replace(/-latest$/, '')
 }
@@ -183,6 +183,7 @@ function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, strin
     }
     const keys = Object.keys(mapped)
     if (keys.length === 0) return
+    // 仅剩 off 表示无可选档位，等同无匹配，不填充
     if (keys.length === 1 && keys[0] === 'off') return
     return mapped
 }
