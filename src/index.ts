@@ -15,8 +15,6 @@ const NS = settingsNamespace('llm-pi-ai')
 const MY_NS = settingsNamespace('model-reasoning')
 const API_URL = 'https://models.dev/api.json'
 const FETCH_MS = 10_000
-// 延迟拉取，避免与首轮缓存填充的写入冲突
-const REFRESH_DELAY_MS = 5_000
 // 并发冲突重试上限，超出后放弃、交由后续事件再触发
 const FILL_MAX_ATTEMPTS = 2
 
@@ -392,18 +390,22 @@ export function apply(ctx: Context) {
     // 首轮缓存读取与异步刷新由 effect 管理：卸载时置位，在途结果不再触碰已卸载上下文
     ctx.effect(() => {
         let disposed = false
-        let timer: ReturnType<typeof setTimeout> | undefined
         void readCache().then((cached) => {
             if (disposed) return
             if (cached) {
                 indexedCache = cached
-                update(ctx)
+                // 首轮填充完成后才拉取最新数据，避免两次写入并发冲突
+                update(ctx).then(() => {
+                    if (disposed) return
+                    refresh(ctx, () => disposed)
+                })
+            } else {
+                // 缓存不可用，直接拉取最新数据
+                refresh(ctx, () => disposed)
             }
-            timer = setTimeout(() => refresh(ctx, () => disposed), cached ? REFRESH_DELAY_MS : 0)
         })
         return () => {
             disposed = true
-            if (timer !== undefined) clearTimeout(timer)
         }
     })
 }
