@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { deepEqualJson, installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import type { SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
@@ -192,21 +192,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
     const proto: unknown = Object.getPrototypeOf(value)
     return proto === Object.prototype || proto === null
-}
-
-/** JSON 兼容数据的深相等（忽略键顺序），避免键序触发无谓写回 */
-function deepEqualJson(a: unknown, b: unknown): boolean {
-    if (a === b) return true
-    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
-    if (Array.isArray(a) || Array.isArray(b)) {
-        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
-        return a.every((entry, i) => deepEqualJson(entry, b[i]))
-    }
-    const left = a as Record<string, unknown>
-    const right = b as Record<string, unknown>
-    const keys = Object.keys(left)
-    if (keys.length !== Object.keys(right).length) return false
-    return keys.every((key) => key in right && deepEqualJson(left[key], right[key]))
 }
 
 /**
