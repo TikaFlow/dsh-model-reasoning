@@ -19,12 +19,22 @@ const FETCH_MS = 10_000
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 5_000
 
-// 自有配置：allowUpdate 开启后以最新数据为准更新已有档位
-interface MyConfig {
-    allowUpdate: boolean
+// 自有配置：allowUpdate 开启后以最新数据为准更新已有档位；bool 统一开关，对象按字段分别控制
+interface AllowUpdateRules {
+    reasoning: boolean
+    /** 上下文窗口与输出上限，二者一体受此开关控制 */
+    context: boolean
 }
+type AllowUpdate = boolean | AllowUpdateRules
+interface MyConfig {
+    allowUpdate: AllowUpdate
+}
+const AllowUpdateRuleSchema: z<AllowUpdateRules> = z.object({
+    reasoning: z.boolean().default(false),
+    context: z.boolean().default(false),
+})
 const MyConfigSchema: z<MyConfig> = z.object({
-    allowUpdate: z.boolean().default(false),
+    allowUpdate: z.union([z.boolean(), AllowUpdateRuleSchema]).default(false),
 })
 // 生效配置源：installSettingsSection 挂载后指向 settings scope，否则回退默认
 let configSource: () => MyConfig = () => ({ allowUpdate: false })
@@ -44,22 +54,30 @@ const HINTS: ReadonlyArray<readonly [string, string]> = [
     ['gpt', 'openai'],
 ]
 
-/** models.dev 单条条目的推理能力解析结果 */
-interface ReasoningEntry {
+/** models.dev 单条条目的推理与容量解析结果 */
+interface ModelEntry {
     reasoning: boolean
     toggle: boolean
     efforts: string[]
+    /** 最大上下文窗口（tokens），models.dev 未提供时为 undefined */
+    contextWindow?: number
+    /** 最大输出 tokens，models.dev 未提供时为 undefined */
+    maxTokens?: number
 }
 
 /** 缓存条目：已拍平并过滤，仅保留填充所需字段 */
 interface CacheEntry {
     provider: string
     id: string
-    /** 可选推理级别，'none' 表示可关闭推理 */
+    /** 可选推理级别，'none' 表示可关闭推理；无可选档位时为空数组 */
     efforts: string[]
+    /** 最大上下文窗口（tokens），仅当 models.dev 提供 */
+    contextWindow?: number
+    /** 最大输出 tokens，仅当 models.dev 提供 */
+    maxTokens?: number
 }
 
-/** 拍平缓存：每条为 provider/id/efforts */
+/** 拍平缓存：每条为 provider/id/efforts 及可选容量字段 */
 type Catalog = CacheEntry[]
 
 /** 按 provider 分组的内存索引，供 lookup 复用 */
@@ -105,11 +123,12 @@ function hintedProvider(id: string): string | undefined {
     return HINTS.find(([prefix]) => bare === prefix || bare.startsWith(`${prefix}-`) || bare.startsWith(`${prefix}.`))?.[1]
 }
 
-function fromApiEntry(entry: unknown): ReasoningEntry | undefined {
+function fromApiEntry(entry: unknown): ModelEntry | undefined {
     if (entry == null || typeof entry !== 'object') return
-    const { reasoning, reasoning_options: rawOptions } = entry as {
+    const { reasoning, reasoning_options: rawOptions, limit } = entry as {
         reasoning?: boolean
         reasoning_options?: unknown
+        limit?: unknown
     }
     const options = Array.isArray(rawOptions) ? rawOptions : []
     const efforts: string[] = []
@@ -124,17 +143,22 @@ function fromApiEntry(entry: unknown): ReasoningEntry | undefined {
             }
         }
     }
-    if (reasoning === false && efforts.length === 0 && !toggle) {
-        return { reasoning: false, toggle: false, efforts: [] }
-    }
-    if (reasoning !== false && (toggle || efforts.length > 0 || reasoning === true)) {
-        return { reasoning: true, toggle, efforts }
-    }
+    // 容量字段
+    const contextWindow = limit != null && typeof limit === 'object' && typeof (limit as Record<string, unknown>).context === 'number'
+        ? (limit as Record<string, number>).context : undefined
+    const maxTokens = limit != null && typeof limit === 'object' && typeof (limit as Record<string, unknown>).output === 'number'
+        ? (limit as Record<string, number>).output : undefined
+    // 有推理级别或上下文信息才算有效数据，否则返回 undefined（不入缓存）
+    // reasoning 为 boolean，=== true 已被 reasoning !== false 蕴含，无需重复判断
+    const hasReasoning = !!reasoning && (toggle || efforts.length > 0)
+    const hasContext = contextWindow !== undefined || maxTokens !== undefined
+    if (!hasReasoning && !hasContext) return
+    return { reasoning: hasReasoning, toggle, efforts, contextWindow, maxTokens }
 }
 
 /**
- * 将 models.dev 原始 JSON 拍平为缓存数组：仅保留有可用推理级别的模型；efforts 过滤为
- * harness 支持的取值并统一 'off' 拼写为 'none'，toggle 且无关闭标记时补 'none'。
+ * 将 models.dev 原始 JSON 拍平为缓存数组：仅保留有可用推理级别或容量数据的模型；
+ * efforts 过滤为 harness 支持的取值并统一 'off' 拼写为 'none'，toggle 且无关闭标记时补 'none'。
  */
 function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
     const catalog: Catalog = []
@@ -144,7 +168,7 @@ function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
         if (models == null || typeof models !== 'object') continue
         for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
             const parsed = fromApiEntry(entry)
-            if (!parsed || !parsed.reasoning) continue
+            if (!parsed) continue
             const efforts = [
                 ...new Set(
                     parsed.efforts
@@ -153,9 +177,13 @@ function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
                 ),
             ]
             if (parsed.toggle && !efforts.includes('none')) efforts.unshift('none')
-            // 仅有 none 的模型无法提供推理等级
-            if (!efforts.some((effort) => effort !== 'none')) continue
-            catalog.push({ provider, id, efforts })
+            const hasUsableReasoning = parsed.reasoning && efforts.some((effort) => effort !== 'none')
+            // 仅有 none 的推理能力（无可选档位）不视为推理数据，但容量字段仍可入库
+            if (!hasUsableReasoning && parsed.contextWindow === undefined && parsed.maxTokens === undefined) continue
+            const result: CacheEntry = { provider, id, efforts: hasUsableReasoning ? efforts : [] }
+            if (parsed.contextWindow !== undefined) result.contextWindow = parsed.contextWindow
+            if (parsed.maxTokens !== undefined) result.maxTokens = parsed.maxTokens
+            catalog.push(result)
         }
     }
     return catalog
@@ -190,7 +218,7 @@ function toReasoningEfforts(entry: CacheEntry | undefined): Record<string, strin
 
 /** 判定是否为普通数据对象（非数组、非 null、非类实例） */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    if (!value || typeof value !== 'object' || value === null || Array.isArray(value)) return false
     const proto: unknown = Object.getPrototypeOf(value)
     return proto === Object.prototype || proto === null
 }
@@ -270,7 +298,7 @@ async function fetchLatest(ctx: Context): Promise<IndexedCatalog> {
     const api = (await res.json()) as Record<string, unknown>
     const catalog = buildCatalog(api)
     // 空数据拒绝覆盖，避免坏响应破坏现有目录
-    if (catalog.length === 0) throw new Error(`${API_URL} 返回的数据未包含可用的模型推理信息`)
+    if (catalog.length === 0) throw new Error(`${API_URL} 返回的数据未包含可用的模型信息`)
     const indexed = indexFromArray(catalog)
     const serialized = JSON.stringify(catalog)
     if (indexedCache === undefined || serialized !== JSON.stringify(indexedCache.catalog)) {
@@ -297,10 +325,16 @@ function isSettingsConflict(error: unknown): boolean {
     return (error as { code?: unknown } | null)?.code === 'SETTINGS_CONFLICT'
 }
 
+/** 解析 allowUpdate 为统一规则对象，bool 统一开关，对象按字段分别控制 */
+function resolveAllowUpdate(cfg: AllowUpdate): AllowUpdateRules {
+    if (typeof cfg === 'boolean') return { reasoning: cfg, context: cfg }
+    return cfg
+}
+
 /**
- * 遍历配置的模型写回变更：缺失推理级别且有档位则填充，开启 allowUpdate 则同步最新档位，
+ * 遍历配置的模型写回变更：缺失推理级别/容量且有数据则填充，开启 allowUpdate 则同步最新值，
  * 并剔除旧版遗留的空 input/compat。读 descriptor.user（原始字段）整段写回 models（路径 op
- * 不支持数组下标中继）；reasoningEfforts:false 永不更新，数据无档位不删除已有配置。
+ * 不支持数组下标中继）；数据无档位不删除已有配置。
  */
 async function update(ctx: Context): Promise<void> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -309,7 +343,7 @@ async function update(ctx: Context): Promise<void> {
         if (!descriptor) return
         const providers = (descriptor.user as { providers?: Record<string, unknown> } | undefined)?.providers
         if (providers == null || typeof providers !== 'object') return
-        const allowUpdate = configSource().allowUpdate
+        const allowRules = resolveAllowUpdate(configSource().allowUpdate)
         const indexed = indexedCache ?? EMPTY_INDEX
         const ops: SettingsPathOp[] = []
         let changes = 0
@@ -322,19 +356,40 @@ async function update(ctx: Context): Promise<void> {
                 const model = models[i]
                 if (model == null || typeof model !== 'object') continue
                 const record = model as Record<string, unknown>
-                const { id, reasoningEfforts } = record as { id?: unknown; reasoningEfforts?: unknown }
+                const { id, reasoningEfforts, contextWindow, maxTokens } = record as {
+                    id?: unknown
+                    reasoningEfforts?: unknown
+                    contextWindow?: unknown
+                    maxTokens?: unknown
+                }
                 if (id == null) continue
                 const cleaned = stripEmptyArtifacts(record)
-                const efforts = toReasoningEfforts(lookup(indexed, providerId, String(id)))
-                const fillable = reasoningEfforts === undefined && efforts !== undefined
-                const updatable = allowUpdate
-                    && efforts !== undefined
-                    && isPlainObject(reasoningEfforts)
+                const entry = lookup(indexed, providerId, String(id))
+                const efforts = toReasoningEfforts(entry)
+                // 推理级别
+                const reasoningFillable = reasoningEfforts === undefined && efforts !== undefined
+                const reasoningUpdatable = allowRules.reasoning
                     && !deepEqualJson(reasoningEfforts, efforts)
-                if (cleaned === record && !fillable && !updatable) continue
+                    && isPlainObject(efforts)
+                const ctxW = entry?.contextWindow
+                const maxT = entry?.maxTokens
+                const contextFillable = contextWindow === undefined && typeof ctxW === 'number'
+                const contextUpdatable = allowRules.context
+                    && ctxW !== contextWindow
+                    && typeof ctxW === 'number'
+                const maxTokensFillable = maxTokens === undefined && typeof maxT === 'number'
+                const maxTokensUpdatable = allowRules.context
+                    && maxT !== maxTokens
+                    && typeof maxT === 'number'
+                if (cleaned === record && !reasoningFillable && !reasoningUpdatable
+                    && !contextFillable && !contextUpdatable && !maxTokensFillable && !maxTokensUpdatable) continue
                 changes++
                 if (next === undefined) next = models.slice()
-                next[i] = (fillable || updatable) ? { ...cleaned, reasoningEfforts: efforts } : cleaned
+                const patched = { ...cleaned }
+                if (reasoningFillable || reasoningUpdatable) patched.reasoningEfforts = efforts
+                if (contextFillable || contextUpdatable) patched.contextWindow = ctxW
+                if (maxTokensFillable || maxTokensUpdatable) patched.maxTokens = maxT
+                next[i] = patched
             }
             if (next !== undefined) {
                 ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
@@ -343,7 +398,7 @@ async function update(ctx: Context): Promise<void> {
         if (ops.length === 0) return
         try {
             await ctx.settings.mutate(NS, ops, descriptor.revision)
-            ctx.logger.info(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、清理空字段）`)
+            ctx.logger.info(`${name}: 已变更 ${changes} 个模型（补充/同步推理级别、容量字段、清理空字段）`)
             return
         } catch (error) {
             const conflict = isSettingsConflict(error) && attempt < MAX_ATTEMPTS
@@ -385,7 +440,7 @@ export function apply(ctx: Context) {
     // 注册自有配置命名空间：setSource 交由 configSource 读取，onChange 响应配置变更
     installSettingsSection(ctx, MY_NS, MyConfigSchema, { allowUpdate: false }, {
         setSource: (current) => { configSource = current },
-        // 关闭状态无需写回，仅开启时同步已有档位
+        // 插件配置变化时重新填充：allowUpdate 为 false（bool）或全 false 对象时无覆盖操作
         onChange: () => {
             if (configSource().allowUpdate) update(ctx)
         },
