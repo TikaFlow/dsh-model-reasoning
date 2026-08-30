@@ -14,7 +14,14 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 
 | 路径 | 说明 |
 | --- | --- |
-| `src/index.ts` | 插件唯一源码入口，全部逻辑集中于此 |
+| `src/index.ts` | 插件本体（仅 `export` 与 `apply` 生命周期），其余逻辑拆分至下列模块 |
+| `src/types.ts` | 共享类型定义（目录条目、索引、配置等） |
+| `src/constants.ts` | 命名空间、重试参数、缓存路径、推理级别集合与提供商提示等常量 |
+| `src/config.ts` | 自有配置 schema、默认值与配置源读写 |
+| `src/catalog.ts` | 目录数据：内存索引、缓存读取、models.dev 拉取与拍平 |
+| `src/lookup.ts` | 模型 id 归一化/匹配与 `lookup`、`toReasoningEfforts` 转换 |
+| `src/update.ts` | 填充流程：遍历模型生成变更并写回 settings |
+| `src/refresh.ts` | 异步刷新编排：拉取最新数据、更新索引后触发填充（含失败重试） |
 | `public/models-cache.json` | models.dev 处理后缓存（拍平数组），构建时复制到产物目录 |
 | `lib/` | 构建产物（gitignore），含 `lib/index.js` 与 `lib/public/models-cache.json` |
 | `cordis.patch.yml` | DSH 补丁层对本插件的注册 |
