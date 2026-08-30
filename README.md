@@ -10,7 +10,7 @@
 - 首轮填充完成后异步拉取 models.dev 最新数据：成功则更新缓存并再次填充；失败以固定 5 秒间隔重试最多 3 次，仍失败仅记录日志、继续使用现有目录
 - 监听 `settings/updated` 事件，模型配置变更后自动重新填充
 - 为缺失推理级别的模型填充 `reasoningEfforts`，为缺失容量字段的模型填充 `contextWindow` / `maxTokens`；已有配置不受影响
-- 支持通过自有配置控制行为：`allowUpdate` 开启后，以 models.dev 最新数据为准同步已有模型的推理级别与容量字段
+- 支持通过自有配置控制行为：`autoFill` 控制是否自动填充缺失字段（默认开启），`allowUpdate` 开启后以 models.dev 最新数据为准同步已有模型的推理级别与容量字段
 
 ## 安装
 
@@ -31,7 +31,9 @@ dsh plugin --profile web add github:TikaFlow/dsh-model-reasoning
 ```yaml
 # 建议直接复制，注意开头不要有空格
 model-reasoning:
-  # 开启后以 models.dev 最新数据为准更新已有推理级别与容量字段；默认 false
+  # 自动填充缺失的推理级别与容量字段；默认 true
+  autoFill: true
+  # 以 models.dev 最新数据为准更新已有推理级别与容量字段；默认 false
   allowUpdate: true
 ```
 
@@ -40,6 +42,9 @@ model-reasoning:
 ```yaml
 # 建议直接复制，注意开头不要有空格
 model-reasoning:
+  autoFill:
+    reasoning: true   # 填充缺失的推理级别档位；未声明等同 false
+    context: true     # 填充缺失的 contextWindow/maxTokens；未声明等同 false
   allowUpdate:
     reasoning: true   # 同步已有模型的推理级别档位；未声明等同 false
     context: false    # 不同步已有模型的 contextWindow/maxTokens（仍会填充缺失值）

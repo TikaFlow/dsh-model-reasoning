@@ -26,8 +26,12 @@ interface AllowUpdateRules {
     context: boolean
 }
 type AllowUpdate = boolean | AllowUpdateRules
+// autoFill：开启后自动填充缺失的推理级别/容量字段；bool 统一开关，对象按字段分别控制
+type AutoFillRules = AllowUpdateRules
+type AutoFill = boolean | AutoFillRules
 interface MyConfig {
     allowUpdate: AllowUpdate
+    autoFill: AutoFill
 }
 const AllowUpdateRuleSchema: z<AllowUpdateRules> = z.object({
     reasoning: z.boolean().default(false),
@@ -35,9 +39,10 @@ const AllowUpdateRuleSchema: z<AllowUpdateRules> = z.object({
 })
 const MyConfigSchema: z<MyConfig> = z.object({
     allowUpdate: z.union([z.boolean(), AllowUpdateRuleSchema]).default(false),
+    autoFill: z.union([z.boolean(), AllowUpdateRuleSchema]).default(true),
 })
 // 生效配置源：installSettingsSection 挂载后指向 settings scope，否则回退默认
-let configSource: () => MyConfig = () => ({ allowUpdate: false })
+let configSource: () => MyConfig = () => ({ allowUpdate: false, autoFill: true })
 
 // 缓存文件：基于模块路径定位，构建时复制；网络拉取成功后覆盖
 const cacheFile = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
@@ -331,6 +336,12 @@ function resolveAllowUpdate(cfg: AllowUpdate): AllowUpdateRules {
     return cfg
 }
 
+/** 解析 autoFill 为统一规则对象，bool 统一开关，对象按字段分别控制 */
+function resolveAutoFill(cfg: AutoFill): AutoFillRules {
+    if (typeof cfg === 'boolean') return { reasoning: cfg, context: cfg }
+    return cfg
+}
+
 /**
  * 遍历配置的模型写回变更：缺失推理级别/容量且有数据则填充，开启 allowUpdate 则同步最新值，
  * 并剔除旧版遗留的空 input/compat。读 descriptor.user（原始字段）整段写回 models（路径 op
@@ -344,6 +355,7 @@ async function update(ctx: Context): Promise<void> {
         const providers = (descriptor.user as { providers?: Record<string, unknown> } | undefined)?.providers
         if (providers == null || typeof providers !== 'object') return
         const allowRules = resolveAllowUpdate(configSource().allowUpdate)
+        const autoRules = resolveAutoFill(configSource().autoFill)
         const indexed = indexedCache ?? EMPTY_INDEX
         const ops: SettingsPathOp[] = []
         let changes = 0
@@ -367,17 +379,20 @@ async function update(ctx: Context): Promise<void> {
                 const entry = lookup(indexed, providerId, String(id))
                 const efforts = toReasoningEfforts(entry)
                 // 推理级别
-                const reasoningFillable = reasoningEfforts === undefined && efforts !== undefined
+                const reasoningFillable = autoRules.reasoning
+                    && reasoningEfforts === undefined && efforts !== undefined
                 const reasoningUpdatable = allowRules.reasoning
                     && !deepEqualJson(reasoningEfforts, efforts)
                     && isPlainObject(efforts)
                 const ctxW = entry?.contextWindow
                 const maxT = entry?.maxTokens
-                const contextFillable = contextWindow === undefined && typeof ctxW === 'number'
+                const contextFillable = autoRules.context
+                    && contextWindow === undefined && typeof ctxW === 'number'
                 const contextUpdatable = allowRules.context
                     && ctxW !== contextWindow
                     && typeof ctxW === 'number'
-                const maxTokensFillable = maxTokens === undefined && typeof maxT === 'number'
+                const maxTokensFillable = autoRules.context
+                    && maxTokens === undefined && typeof maxT === 'number'
                 const maxTokensUpdatable = allowRules.context
                     && maxT !== maxTokens
                     && typeof maxT === 'number'
@@ -438,11 +453,11 @@ function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEM
 
 export function apply(ctx: Context) {
     // 注册自有配置命名空间：setSource 交由 configSource 读取，onChange 响应配置变更
-    installSettingsSection(ctx, MY_NS, MyConfigSchema, { allowUpdate: false }, {
+    installSettingsSection(ctx, MY_NS, MyConfigSchema, { allowUpdate: false, autoFill: true }, {
         setSource: (current) => { configSource = current },
-        // 插件配置变化时重新填充：allowUpdate 为 false（bool）或全 false 对象时无覆盖操作
+        // 插件配置变化时重新填充：autoFill 控制是否填充缺失字段，allowUpdate 控制是否同步已有字段
         onChange: () => {
-            if (configSource().allowUpdate) update(ctx)
+            if (configSource().autoFill || configSource().allowUpdate) update(ctx)
         },
     })
     // llm-pi-ai 模型配置变更后重新填充
