@@ -1,3 +1,5 @@
+/** 共享类型定义与纯类型守卫 */
+
 /** models.dev 单条条目的推理与容量解析结果 */
 export interface ModelEntry {
     reasoning: boolean
@@ -36,6 +38,37 @@ export interface IndexedCatalog {
     groups: Map<string, ProviderGroup>
 }
 
+/** 判断是否为普通数据对象（非数组、非 null、非类实例） */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const proto: unknown = Object.getPrototypeOf(value)
+    return proto === Object.prototype || proto === null
+}
+
+// ---------- LEGACY（v0）：旧命名空间（model-reasoning）配置的冻结形态（对应插件 0.5.6 的 schema）。 ----------
+// ---------- 定义不随代码演进；MIN_SUPPORTED_VERSION 超过 0 时本段与 migrate.ts、index.ts 中的 LEGACY 代码一并移除 ----------
+
+/** LEGACY(v0)：按字段分别控制的规则（对象写法） */
+export interface LegacyFieldRules {
+    /** 推理级别字段 */
+    reasoning: boolean
+    /** 上下文窗口与输出上限 */
+    context: boolean
+}
+
+/** LEGACY(v0)：bool 统一开关或对象按字段控制 */
+export type LegacyFieldSwitch = boolean | LegacyFieldRules
+
+/** LEGACY(v0)：旧命名空间（model-reasoning）下的完整配置形态 */
+export interface LegacyConfig {
+    /** 以 models.dev 最新数据为准更新已有配置 */
+    allowUpdate: LegacyFieldSwitch
+    /** 自动填充缺失的推理级别/容量字段 */
+    autoFill: LegacyFieldSwitch
+}
+
+// ---------- 当前版本随升级链持续演进 ----------
+
 /** 按字段分别控制的规则开关 */
 export interface FieldRules {
     /** 推理级别字段 */
@@ -44,13 +77,20 @@ export interface FieldRules {
     context: boolean
 }
 
-/** bool 统一开关，对象按字段分别控制 */
-export type FieldSwitch = boolean | FieldRules
-
-/** 自有配置（model-reasoning 命名空间） */
-export interface MyConfig {
+/** 当前运行时配置（仅对象写法） */
+export interface PluginConfig {
     /** 开启后以 models.dev 最新数据为准更新已有配置 */
-    allowUpdate: FieldSwitch
+    allowUpdate: FieldRules
     /** 开启后自动填充缺失的推理级别/容量字段 */
-    autoFill: FieldSwitch
+    autoFill: FieldRules
 }
+
+/** 当前版本的存储快照：运行时配置字段 + 显式版本号 */
+export interface PluginConfigSnapshot {
+    configVersion: number
+    allowUpdate: FieldRules
+    autoFill: FieldRules
+}
+
+/** 命名空间下的整段配置：version-N -> 对应版本的配置快照（保留低版本历史与更高新版本，便于无损回退） */
+export type VersionedSection = Record<string, unknown>

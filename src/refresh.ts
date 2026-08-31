@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { fetchLatest, setCatalog } from './catalog'
 import { MAX_ATTEMPTS, PLUGIN_NAME, RETRY_DELAY_MS } from './constants'
-import { update } from './update'
+import { fix } from './fix'
 
 /** 异步拉取最新数据：成功后更新索引并再次填充；isDisposed 避免结果触碰已卸载上下文 */
 export function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEMPTS): void {
@@ -9,7 +9,7 @@ export function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MA
         .then((indexed) => {
             if (isDisposed()) return
             setCatalog(indexed)
-            update(ctx).catch((error) => {
+            fix(ctx).catch((error) => {
                 if (isDisposed()) return
                 ctx.logger.warn(`${PLUGIN_NAME}: 填充失败：${error instanceof Error ? error.message : String(error)}`)
             })

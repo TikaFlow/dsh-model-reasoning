@@ -11,6 +11,7 @@
 - 监听 `settings/updated` 事件，模型配置变更后自动重新填充
 - 为缺失推理级别的模型填充 `reasoningEfforts`，为缺失容量字段的模型填充 `contextWindow` / `maxTokens`；已有配置不受影响
 - 支持通过自有配置控制行为：`autoFill` 控制是否自动填充缺失字段（默认开启），`allowUpdate` 开启后以 models.dev 最新数据为准同步已有模型的推理级别与容量字段
+- 配置存放在独立命名空间，插件升级时自动迁移旧配置，回退旧版本亦不受影响，全程无需手动处理
 
 ## 安装
 
@@ -35,26 +36,16 @@ dsh web
 
 在 Web 设置界面右上角点击「打开配置文件 / Open configuration file」直接编辑 `settings.yaml`，在文件末尾添加：
 
-布尔值写法（统一开关）：
-
 ```yaml
 # 建议直接复制，注意开头不要有空格
-model-reasoning:
-  # 自动填充缺失的推理级别与容量字段；默认 true
-  autoFill: true
-  # 以 models.dev 最新数据为准更新已有推理级别与容量字段；默认 false
-  allowUpdate: true
+tikaflow-model-fix:
+  version-1:
+    autoFill:
+      reasoning: true   # 填充缺失的推理级别档位；默认 true
+      context: true     # 填充缺失的 contextWindow/maxTokens；默认 true
+    allowUpdate:
+      reasoning: true   # 同步已有模型的推理级别档位；默认 false
+      context: false    # 不同步已有模型的 contextWindow/maxTokens；默认 false
 ```
 
-或者，对象写法（精细控制）。省略字段的默认值跟随整项默认值：
-
-```yaml
-# 建议直接复制，注意开头不要有空格
-model-reasoning:
-  autoFill:
-    reasoning: true   # 填充缺失的推理级别档位；默认 true
-    context: true     # 填充缺失的 contextWindow/maxTokens；默认 true
-  allowUpdate:
-    reasoning: true   # 同步已有模型的推理级别档位；默认 false
-    context: false    # 不同步已有模型的 contextWindow/maxTokens；默认 false
-```
+> 旧版本 `model-reasoning` 命名空间下的配置（含布尔写法）会自动迁移为上述对象形态，无需手动处理；旧配置段会留在文件中，确认无误后可自行删除。

@@ -6,6 +6,7 @@ node_modules/
 # ---- 构建产物与类型缓存 ----
 lib/
 dist/
+.test-dist/
 *.tsbuildinfo
 
 # ---- 打包产物 ----

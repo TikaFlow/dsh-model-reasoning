@@ -4,6 +4,8 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
@@ -12,6 +14,7 @@
     ]
   },
   "include": [
-    "src"
+    "src",
+    "test"
   ]
 }

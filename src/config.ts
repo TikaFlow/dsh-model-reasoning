@@ -1,29 +1,85 @@
 import z from '@deepseek-ai/schemastery'
-import type { FieldRules, MyConfig } from './types'
+import { CONFIG_VERSION, MIN_SUPPORTED_VERSION, VERSION_PREFIX } from './constants'
+import type { FieldRules, PluginConfig, VersionedSection } from './types'
+import { isPlainObject } from './types'
 
 /** 默认配置：填充缺失开启，覆盖更新关闭 */
-export const DEFAULT_CONFIG: MyConfig = { allowUpdate: false, autoFill: true }
+export const DEFAULT_CONFIG: PluginConfig = {
+    allowUpdate: { reasoning: false, context: false },
+    autoFill: { reasoning: true, context: true },
+}
 
-/** 字段规则 schema：dflt 为对象写法下省略字段的默认值（autoFill 传 true，allowUpdate 传 false） */
+/** 命名空间下的默认段值（版本快照容器） */
+export const DEFAULT_SECTION: VersionedSection = {}
+
+/** 字段规则 schema：dflt 为省略字段的默认值（autoFill 传 true，allowUpdate 传 false） */
 const fieldRules = (dflt: boolean): z<FieldRules> => z.object({
     reasoning: z.boolean().default(dflt),
     context: z.boolean().default(dflt),
 })
 
-export const MyConfigSchema: z<MyConfig> = z.object({
-    allowUpdate: z.union([z.boolean(), fieldRules(false)]).default(false),
-    autoFill: z.union([z.boolean(), fieldRules(true)]).default(true),
+/**
+ * 当前版本配置 schema：仅对象写法（布尔写法由升级链展开为对象后进入存储，运行时再不接受，杜绝语法二义性）；
+ * 字段整体缺失时落该项默认。
+ */
+const PluginConfigSchema: z<PluginConfig> = z.object({
+    allowUpdate: fieldRules(false).default({ reasoning: false, context: false }),
+    autoFill: fieldRules(true).default({ reasoning: true, context: true }),
 })
 
+/** 命名空间整段的 schema：宽松字典，保证比当前代码更新的版本快照也能通过注册校验 */
+export const SectionSchema: z<VersionedSection> = z.dict(z.any())
+
+/** 解析版本快照键 version-N；非法返回 undefined */
+export function parseVersion(key: string): number | undefined {
+    if (!key.startsWith(VERSION_PREFIX)) return
+    const value = Number(key.slice(VERSION_PREFIX.length))
+    return Number.isInteger(value) && value >= 0 ? value : undefined
+}
+
+/** 版本快照键 */
+export function versionKey(version: number): string {
+    return `${VERSION_PREFIX}${version}`
+}
+
+/** 校验单个快照值并物化默认；剥离 configVersion 等运行时不消费的键，非法返回 undefined */
+function parseEntry(value: unknown): PluginConfig | undefined {
+    if (!isPlainObject(value)) return
+    try {
+        const parsed = PluginConfigSchema(value as unknown as PluginConfig)
+        return { allowUpdate: parsed.allowUpdate, autoFill: parsed.autoFill }
+    } catch {
+        return
+    }
+}
+
+/**
+ * 从版本快照段解析运行时配置：优先当前版本；否则取 ≤ 当前且 ≥ 最低支持的最高版本；
+ * 均不可用时回退默认配置（更高版本快照超出本代码理解范围，由写入它的版本负责）。
+ */
+export function resolveConfig(section: unknown): PluginConfig {
+    if (!isPlainObject(section)) return DEFAULT_CONFIG
+    let best: { version: number; config: PluginConfig } | undefined
+    for (const [key, value] of Object.entries(section)) {
+        const version = parseVersion(key)
+        if (version === undefined || version < MIN_SUPPORTED_VERSION || version > CONFIG_VERSION) continue
+        const config = parseEntry(value)
+        if (!config) continue
+        if (version === CONFIG_VERSION) return config
+        if (!best || version > best.version) best = { version, config }
+    }
+    return best?.config ?? DEFAULT_CONFIG
+}
+
 // 生效配置源：installSettingsSection 挂载后指向 settings scope，否则回退默认
-let configSource: () => MyConfig = () => DEFAULT_CONFIG
+let configSource: () => PluginConfig = () => DEFAULT_CONFIG
 
 /** 挂载配置读取来源（由 installSettingsSection 的 setSource 调用） */
-export function setConfigSource(current: () => MyConfig): void {
+export function setConfigSource(current: () => PluginConfig): void {
     configSource = current
 }
 
 /** 当前生效配置 */
-export function getConfig(): MyConfig {
+export function getConfig(): PluginConfig {
     return configSource()
 }

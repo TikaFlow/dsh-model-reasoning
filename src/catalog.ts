@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import { API_URL, CACHE_FILE, FETCH_MS, LEVELS, MAX_ATTEMPTS, PLUGIN_NAME, RETRY_DELAY_MS } from './constants'
 import type { CacheEntry, Catalog, IndexedCatalog, ModelEntry, ProviderGroup } from './types'
+import { isPlainObject } from './types'
 
 /** 目录尚未可用时的空兜底 */
 const EMPTY_INDEX: IndexedCatalog = { catalog: [], groups: new Map() }
@@ -21,7 +22,7 @@ export function setCatalog(indexed: IndexedCatalog): void {
 
 /** 解析 models.dev 单条模型数据为推理与容量结果；无有效信息返回 undefined */
 function fromApiEntry(entry: unknown): ModelEntry | undefined {
-    if (entry == null || typeof entry !== 'object') return
+    if (!isPlainObject(entry)) return
     const { reasoning, reasoning_options: rawOptions, limit } = entry as {
         reasoning?: boolean
         reasoning_options?: unknown
@@ -31,7 +32,7 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
     const efforts: string[] = []
     let toggle = false
     for (const option of options) {
-        if (option == null || typeof option !== 'object') continue
+        if (!isPlainObject(option)) continue
         const { type, values } = option as { type?: unknown; values?: unknown }
         if (type === 'toggle') toggle = true
         if (type === 'effort' && Array.isArray(values)) {
@@ -40,14 +41,12 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
             }
         }
     }
-    // 容量字段
-    const contextWindow = limit != null && typeof limit === 'object' && typeof (limit as Record<string, unknown>).context === 'number'
-        ? (limit as Record<string, number>).context : undefined
-    const maxTokens = limit != null && typeof limit === 'object' && typeof (limit as Record<string, unknown>).output === 'number'
-        ? (limit as Record<string, number>).output : undefined
-    // 有推理级别或上下文信息才算有效数据，否则返回 undefined（不入缓存）
-    // reasoning 为 boolean，=== true 已被 reasoning !== false 蕴含，无需重复判断
-    const hasReasoning = !!reasoning && (toggle || efforts.length > 0)
+    // 容量字段（limit.context / limit.output）
+    const limitRecord = isPlainObject(limit) ? limit : undefined
+    const contextWindow = typeof limitRecord?.context === 'number' ? limitRecord.context : undefined
+    const maxTokens = typeof limitRecord?.output === 'number' ? limitRecord.output : undefined
+    // 有推理级别或容量信息才算有效数据
+    const hasReasoning = reasoning === true && (toggle || efforts.length > 0)
     const hasContext = contextWindow !== undefined || maxTokens !== undefined
     if (!hasReasoning && !hasContext) return
     return { reasoning: hasReasoning, toggle, efforts, contextWindow, maxTokens }
@@ -60,9 +59,9 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
 function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
     const catalog: Catalog = []
     for (const [provider, block] of Object.entries(api ?? {})) {
-        if (block == null || typeof block !== 'object') continue
+        if (!isPlainObject(block)) continue
         const models = (block as { models?: unknown }).models
-        if (models == null || typeof models !== 'object') continue
+        if (!isPlainObject(models)) continue
         for (const [id, entry] of Object.entries(models as Record<string, unknown>)) {
             const parsed = fromApiEntry(entry)
             if (!parsed) continue
@@ -122,7 +121,7 @@ export async function fetchLatest(ctx: Context): Promise<IndexedCatalog> {
     if (catalog.length === 0) throw new Error(`${API_URL} 返回的数据未包含可用的模型信息`)
     const indexed = indexFromArray(catalog)
     const serialized = JSON.stringify(catalog)
-    if (indexedCache === undefined || serialized !== JSON.stringify(indexedCache.catalog)) {
+    if (!indexedCache || serialized !== JSON.stringify(indexedCache.catalog)) {
         for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 await writeFile(CACHE_FILE, serialized)
