@@ -27,6 +27,9 @@ export const FETCH_MS = 10_000
 export const MAX_ATTEMPTS = 3
 export const RETRY_DELAY_MS = 5_000
 
+/** 启动等待自有命名空间注册完成的最大轮询次数（每次让出一个宏任务，正常一两次即命中） */
+export const REGISTER_WAIT_MAX = 50
+
 /** 缓存文件：基于模块路径定位，构建时复制；网络拉取成功后覆盖 */
 export const CACHE_FILE = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
 

@@ -1,7 +1,7 @@
 import z from '@deepseek-ai/schemastery'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsNamespace, SettingsPathOp } from '@deepseek-ai/dsh-settings'
-import { CONFIG_VERSION, LEGACY_NS, MAX_OLD_SNAPSHOTS, MIN_SUPPORTED_VERSION, PLUGIN_NAME, PLUGIN_NS } from './constants'
+import { CONFIG_VERSION, LEGACY_NS, MAX_OLD_SNAPSHOTS, MIN_SUPPORTED_VERSION, PLUGIN_NAME, PLUGIN_NS, REGISTER_WAIT_MAX } from './constants'
 import { DEFAULT_CONFIG, parseVersion, versionKey } from './config'
 import type { LegacyConfig, LegacyFieldRules, LegacyFieldSwitch, PluginConfigSnapshot, V1FieldRules, V1PluginConfigSnapshot, VersionedSection } from './types'
 import { isPlainObject } from './types'
@@ -29,21 +29,21 @@ function legacyExpand(value: LegacyFieldSwitch): LegacyFieldRules {
     return value
 }
 
-// ---------- LEGACY（v1）迁移源代码：version-1 快照的冻结形态（见 types.ts LEGACY(v1) 段说明），不引用当前版本的可演进定义。 ----------
+// ---------- 历史版本（v1）迁移源代码：新命名空间版本快照体系内 v1 快照的冻结形态（见 types.ts 历史版本(v1) 段说明，非 LEGACY 旧命名空间），不引用当前版本的可演进定义。 ----------
 
-/** LEGACY(v1)：字段规则 schema（无 image 字段），dflt 为省略字段的默认值 */
+/** 历史版本(v1)：字段规则 schema（无 image 字段），dflt 为省略字段的默认值 */
 const v1FieldRules = (dflt: boolean): z<V1FieldRules> => z.object({
     reasoning: z.boolean().default(dflt),
     context: z.boolean().default(dflt),
 })
 
-/** LEGACY(v1)：配置 schema（仅对象写法，configVersion 等多余键被 schema 忽略） */
+/** 历史版本(v1)：配置 schema（仅对象写法，configVersion 等多余键被 schema 忽略） */
 const V1ConfigSchema: z<Omit<V1PluginConfigSnapshot, 'configVersion'>> = z.object({
     allowUpdate: v1FieldRules(false).default({ reasoning: false, context: false }),
     autoFill: v1FieldRules(true).default({ reasoning: true, context: true }),
 })
 
-/** LEGACY(v1)：默认配置，解析失败兜底 */
+/** 历史版本(v1)：默认配置，解析失败兜底 */
 const V1_BASE: Omit<V1PluginConfigSnapshot, 'configVersion'> = { allowUpdate: { reasoning: false, context: false }, autoFill: { reasoning: true, context: true } }
 
 /** v0 → v1：输入按 v0 schema 解析（非法整体回退 v0 默认），布尔统一开关展开为对象并补齐省略字段，添加版本号 */
@@ -129,6 +129,31 @@ function readSection(ctx: Context, ns: SettingsNamespace) {
     const descriptor = ctx.settings.describe().find((d) => d.ns === ns)
     if (!descriptor) return
     return { user: descriptor.user, revision: descriptor.revision }
+}
+
+/**
+ * 某命名空间当前是否已成功注册。
+ * 注册在 installSettingsSection 的子 fiber 微任务内完成，重复注册或存储段非法会在该时点抛出，
+ * 故注册成功与否只能在异步就绪点用本函数观察。
+ */
+export function isNamespaceRegistered(ctx: Context, ns: SettingsNamespace): boolean {
+    return ctx.settings.describe().some((descriptor) => descriptor.ns === ns)
+}
+
+/**
+ * 有界等待自有配置命名空间完成注册。
+ * 背景：installSettingsSection 经 ctx.inject 子 fiber 注册命名空间，注册回调被推迟到微任务；
+ * 而插件 apply 内的启动 effect 同步执行，此刻 describe() 尚不含 PLUGIN_NS，直接迁移会读空、写空。
+ * 让出一个宏任务即可排空这些微任务（含注册）；设次数上限以在服务缺席时不阻塞，尊重卸载。
+ */
+export async function waitForSettingsReady(ctx: Context, isDisposed: () => boolean): Promise<boolean> {
+    for (let attempt = 0; attempt < REGISTER_WAIT_MAX; attempt++) {
+        if (isDisposed()) return false
+        if (isNamespaceRegistered(ctx, PLUGIN_NS)) return true
+        // 让出一个宏任务：当前所有微任务（含注册回调）排空后再检查
+        await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    return isNamespaceRegistered(ctx, PLUGIN_NS)
 }
 
 /**
