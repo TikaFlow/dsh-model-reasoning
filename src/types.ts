@@ -27,7 +27,7 @@ export interface CacheEntry {
     image?: boolean
 }
 
-/** 拍平缓存：每条为 provider/id/efforts 及可选容量字段 */
+/** 拍平缓存：每条为 provider/id/efforts 及可选的容量与图片字段 */
 export type Catalog = CacheEntry[]
 
 /** 按 provider 分组的内存索引，供 lookup 复用 */
@@ -71,10 +71,10 @@ export interface LegacyConfig {
     autoFill: LegacyFieldSwitch
 }
 
-// ---------- LEGACY（v1）：version-1 快照的冻结形态（对应引入 image 前的配置）。 ----------
-// ---------- 定义不随代码演进；MIN_SUPPORTED_VERSION 超过 1 时本段与 migrate.ts 的 upgrade1To2 一并移除 ----------
+// ---------- 历史版本（v1）：新命名空间（tikaflow-model-fix）版本快照体系内 v1 快照的冻结形态（引入 image 前的配置）。 ----------
+// ---------- 属版本快照体系（0.6.0 起，非 LEGACY 旧命名空间）；定义不随代码演进，MIN_SUPPORTED_VERSION 超过 1 时本段与 migrate.ts 的 upgrade1To2 一并移除 ----------
 
-/** LEGACY(v1)：按字段分别控制的规则（无 image 字段） */
+/** 历史版本(v1)：按字段分别控制的规则（无 image 字段） */
 export interface V1FieldRules {
     /** 推理级别字段 */
     reasoning: boolean
@@ -82,7 +82,7 @@ export interface V1FieldRules {
     context: boolean
 }
 
-/** LEGACY(v1)：version-1 快照的完整形态 */
+/** 历史版本(v1)：version-1 快照的完整形态 */
 export interface V1PluginConfigSnapshot {
     configVersion: number
     allowUpdate: V1FieldRules
@@ -105,7 +105,7 @@ export interface FieldRules {
 export interface PluginConfig {
     /** 开启后以 models.dev 最新数据为准更新已有配置 */
     allowUpdate: FieldRules
-    /** 开启后自动填充缺失的推理级别/容量字段 */
+    /** 开启后自动填充缺失的推理级别/容量/图片字段 */
     autoFill: FieldRules
 }
 
