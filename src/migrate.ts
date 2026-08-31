@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsNamespace, SettingsPathOp } from '@deepseek-ai/dsh-settings'
 import { CONFIG_VERSION, LEGACY_NS, MAX_OLD_SNAPSHOTS, MIN_SUPPORTED_VERSION, PLUGIN_NAME, PLUGIN_NS } from './constants'
 import { DEFAULT_CONFIG, parseVersion, versionKey } from './config'
-import type { LegacyConfig, LegacyFieldRules, LegacyFieldSwitch, PluginConfigSnapshot, VersionedSection } from './types'
+import type { LegacyConfig, LegacyFieldRules, LegacyFieldSwitch, PluginConfigSnapshot, V1FieldRules, V1PluginConfigSnapshot, VersionedSection } from './types'
 import { isPlainObject } from './types'
 
 // ---------- LEGACY（v0）迁移源代码：形态冻结（见 types.ts LEGACY 段说明），不引用当前版本的可演进定义。 ----------
@@ -29,8 +29,25 @@ function legacyExpand(value: LegacyFieldSwitch): LegacyFieldRules {
     return value
 }
 
+// ---------- LEGACY（v1）迁移源代码：version-1 快照的冻结形态（见 types.ts LEGACY(v1) 段说明），不引用当前版本的可演进定义。 ----------
+
+/** LEGACY(v1)：字段规则 schema（无 image 字段），dflt 为省略字段的默认值 */
+const v1FieldRules = (dflt: boolean): z<V1FieldRules> => z.object({
+    reasoning: z.boolean().default(dflt),
+    context: z.boolean().default(dflt),
+})
+
+/** LEGACY(v1)：配置 schema（仅对象写法，configVersion 等多余键被 schema 忽略） */
+const V1ConfigSchema: z<Omit<V1PluginConfigSnapshot, 'configVersion'>> = z.object({
+    allowUpdate: v1FieldRules(false).default({ reasoning: false, context: false }),
+    autoFill: v1FieldRules(true).default({ reasoning: true, context: true }),
+})
+
+/** LEGACY(v1)：默认配置，解析失败兜底 */
+const V1_BASE: Omit<V1PluginConfigSnapshot, 'configVersion'> = { allowUpdate: { reasoning: false, context: false }, autoFill: { reasoning: true, context: true } }
+
 /** v0 → v1：输入按 v0 schema 解析（非法整体回退 v0 默认），布尔统一开关展开为对象并补齐省略字段，添加版本号 */
-function upgrade0To1(config: unknown, fromVersion: number): PluginConfigSnapshot {
+function upgrade0To1(config: unknown, fromVersion: number): V1PluginConfigSnapshot {
     if (fromVersion < MIN_SUPPORTED_VERSION) {
         throw new Error(`无法从 v${fromVersion} 升级：低于最低支持版本 v${MIN_SUPPORTED_VERSION}`)
     }
@@ -46,17 +63,36 @@ function upgrade0To1(config: unknown, fromVersion: number): PluginConfigSnapshot
 
 // ---------- 升级链（每级只做相邻版本升级） ----------
 
+/** v1 → v2：输入按 v1 冻结 schema 解析（非法整体回退 v1 默认），新增 image 字段并落各自默认（autoFill=true、allowUpdate=false） */
+function upgrade1To2(config: unknown, fromVersion: number): PluginConfigSnapshot {
+    const v1 = fromVersion < 1
+        ? upgrade0To1(config, fromVersion)
+        : (() => {
+            try {
+                return V1ConfigSchema((isPlainObject(config) ? config : {}) as unknown as Omit<V1PluginConfigSnapshot, 'configVersion'>)
+            } catch {
+                return V1_BASE
+            }
+        })()
+    // 台阶目标版本固定为 2（本函数产物形态恒定），更高版本由后续台阶接力，故不引用 CONFIG_VERSION
+    return {
+        configVersion: 2,
+        allowUpdate: { ...v1.allowUpdate, image: false },
+        autoFill: { ...v1.autoFill, image: true },
+    }
+}
+
 /**
  * 配置版本迁移入口：把 fromVersion（段内旧快照版本；旧 NS 配置传最低支持版本 0）
  * 逐级升级到当前 CONFIG_VERSION 快照形态。
  * 新版本发布时：新增「只做相邻一级升级」的 upgradeNToN+1 函数，并把本函数指向最新台阶，
- * 链上既有函数一律不改。例如未来当前版本=2：
- *   upgradeConfig = (c, v) => upgrade1To2(c, v)
- *   upgrade1To2 = (c, v) => { const v1 = v < 1 ? upgrade0To1(c, v) : c; return /* 1→2 的升级 *\/ }
+ * 链上既有函数一律不改。例如未来当前版本=3：
+ *   upgradeConfig = (c, v) => upgrade2To3(c, v)
+ *   upgrade2To3 = (c, v) => { const v2 = v < 2 ? upgrade1To2(c, v) : c; return /* 2→3 的升级 *\/ }
  */
 export function upgradeConfig(config: unknown, fromVersion: number): PluginConfigSnapshot {
-    // 当前版本 = 1：升级链唯一台阶为 v0 → v1
-    return upgrade0To1(config, fromVersion)
+    // 当前版本 = 2：升级链最新台阶为 v1 → v2
+    return upgrade1To2(config, fromVersion)
 }
 
 /** 全新用户的规范默认快照（与升级链对空输入的结果一致，由 test 守护） */

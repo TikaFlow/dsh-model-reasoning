@@ -23,13 +23,18 @@ function stripEmptyArtifacts(model: Record<string, unknown>): Record<string, unk
     return next ?? model
 }
 
+/** 缓存图片信息转换为写回的 input 模态数组：仅支持图片时填 ['text','image']，无数据或纯文本不填（未声明即按纯文本处理） */
+function toInputValue(image: boolean | undefined): string[] | undefined {
+    return image ? ['text', 'image'] : undefined
+}
+
 /** 判断错误是否为并发写入冲突（settings 命名空间在读写之间被改动） */
 function isSettingsConflict(error: unknown): boolean {
     return (error as { code?: unknown })?.code === 'SETTINGS_CONFLICT'
 }
 
 /**
- * 遍历配置的模型写回变更：缺失推理级别/容量且有数据则填充，开启 allowUpdate 则同步最新值，
+ * 遍历配置的模型写回变更：缺失推理级别/容量/图片模态且有数据则填充，开启 allowUpdate 则同步最新值，
  * 并剔除空 input/compat。读 descriptor.user（原始字段）整段写回 models（路径 op
  * 不支持数组下标中继）；数据无档位不删除已有配置。
  */
@@ -65,6 +70,9 @@ export async function fix(ctx: Context): Promise<void> {
                 const cleaned = stripEmptyArtifacts(record)
                 const entry = lookup(indexed, providerId, String(id))
                 const efforts = toReasoningEfforts(entry)
+                // 图片模态以剔除空数组后的值为准（harness 语义：空数组 = 未声明）
+                const input = cleaned.input
+                const inputValue = toInputValue(entry?.image)
                 // 推理级别
                 const reasoningFillable = autoRules.reasoning
                     && reasoningEfforts === undefined && !!efforts
@@ -83,14 +91,21 @@ export async function fix(ctx: Context): Promise<void> {
                 const maxTokensUpdatable = allowRules.context
                     && maxT !== maxTokens
                     && typeof maxT === 'number'
+                const imageFillable = autoRules.image
+                    && input === undefined && !!inputValue
+                const imageUpdatable = allowRules.image
+                    && !!inputValue
+                    && !deepEqualJson(input, inputValue)
                 if (cleaned === record && !reasoningFillable && !reasoningUpdatable
-                    && !contextFillable && !contextUpdatable && !maxTokensFillable && !maxTokensUpdatable) continue
+                    && !contextFillable && !contextUpdatable && !maxTokensFillable && !maxTokensUpdatable
+                    && !imageFillable && !imageUpdatable) continue
                 changes++
                 next ??= models.slice()
                 const patched = { ...cleaned }
                 if (reasoningFillable || reasoningUpdatable) patched.reasoningEfforts = efforts
                 if (contextFillable || contextUpdatable) patched.contextWindow = ctxW
                 if (maxTokensFillable || maxTokensUpdatable) patched.maxTokens = maxT
+                if (imageFillable || imageUpdatable) patched.input = inputValue
                 next[i] = patched
             }
             if (next) {
@@ -100,7 +115,7 @@ export async function fix(ctx: Context): Promise<void> {
         if (ops.length === 0) return
         try {
             await ctx.settings.mutate(API_NS, ops, descriptor.revision)
-            ctx.logger.info(`${PLUGIN_NAME}: 已变更 ${changes} 个模型（补充/同步推理级别、容量字段、清理空字段）`)
+            ctx.logger.info(`${PLUGIN_NAME}: 已变更 ${changes} 个模型（补充/同步推理级别、容量字段、图片模态、清理空字段）`)
             return
         } catch (error) {
             if (isSettingsConflict(error) && attempt < MAX_ATTEMPTS) continue

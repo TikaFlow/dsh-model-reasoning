@@ -8,13 +8,31 @@ export function run(): void {
     check('parseVersion 合法', parseVersion('version-12') === 12)
     check('parseVersion 非法返回 undefined', parseVersion('version-x') === undefined && parseVersion('allowUpdate') === undefined)
 
-    const v1Entry = { configVersion: 1, autoFill: { reasoning: true, context: false }, allowUpdate: { reasoning: false, context: false } }
-    const DEFAULT_STABLE = stable({ allowUpdate: { reasoning: false, context: false }, autoFill: { reasoning: true, context: true } })
-    check('取当前版本快照', stable(resolveConfig({ 'version-1': v1Entry })) === stable({ autoFill: { reasoning: true, context: false }, allowUpdate: { reasoning: false, context: false } }), resolveConfig({ 'version-1': v1Entry }))
-    check('布尔写法在 v1 快照中非法，回退默认', stable(resolveConfig({ 'version-1': { configVersion: 1, allowUpdate: true, autoFill: false } })) === DEFAULT_STABLE, resolveConfig({ 'version-1': { configVersion: 1, allowUpdate: true, autoFill: false } }))
-    check('缺字段按整项默认补齐', stable(resolveConfig({ 'version-1': { configVersion: 1, autoFill: { context: false } } })) === stable({ allowUpdate: { reasoning: false, context: false }, autoFill: { reasoning: true, context: false } }), resolveConfig({ 'version-1': { configVersion: 1, autoFill: { context: false } } }))
-    check('低版本快照含布尔写法（v0 形态）无法按 v1 解析，回退默认', stable(resolveConfig({ 'version-0': { allowUpdate: true } })) === DEFAULT_STABLE, resolveConfig({ 'version-0': { allowUpdate: true } }))
+    const DEFAULT_STABLE = stable({
+        allowUpdate: { reasoning: false, context: false, image: false },
+        autoFill: { reasoning: true, context: true, image: true },
+    })
+    const v2Entry = {
+        configVersion: 2,
+        autoFill: { reasoning: true, context: false, image: false },
+        allowUpdate: { reasoning: false, context: false, image: true },
+    }
+    check('取当前版本（v2）快照', stable(resolveConfig({ 'version-2': v2Entry })) === stable({
+        autoFill: { reasoning: true, context: false, image: false },
+        allowUpdate: { reasoning: false, context: false, image: true },
+    }), resolveConfig({ 'version-2': v2Entry }))
+    check('布尔写法在 v2 快照中非法，回退默认', stable(resolveConfig({ 'version-2': { configVersion: 2, allowUpdate: true, autoFill: false } })) === DEFAULT_STABLE, resolveConfig({ 'version-2': { configVersion: 2, allowUpdate: true, autoFill: false } }))
+    check('缺字段按整项默认补齐（含 image）', stable(resolveConfig({ 'version-2': { configVersion: 2, autoFill: { context: false } } })) === stable({
+        allowUpdate: { reasoning: false, context: false, image: false },
+        autoFill: { reasoning: true, context: false, image: true },
+    }), resolveConfig({ 'version-2': { configVersion: 2, autoFill: { context: false } } }))
+    check('image 非法值整项回退默认', stable(resolveConfig({ 'version-2': { configVersion: 2, autoFill: { image: 'x' } } })) === DEFAULT_STABLE, resolveConfig({ 'version-2': { configVersion: 2, autoFill: { image: 'x' } } }))
+    check('v1 旧快照缺 image 按默认补齐后生效', stable(resolveConfig({ 'version-1': { configVersion: 1, autoFill: { reasoning: false, context: false } } })) === stable({
+        allowUpdate: { reasoning: false, context: false, image: false },
+        autoFill: { reasoning: false, context: false, image: true },
+    }), resolveConfig({ 'version-1': { configVersion: 1, autoFill: { reasoning: false, context: false } } }))
+    check('低版本快照含布尔写法（v0 形态）无法按当前 schema 解析，回退默认', stable(resolveConfig({ 'version-0': { allowUpdate: true } })) === DEFAULT_STABLE, resolveConfig({ 'version-0': { allowUpdate: true } }))
     check('仅更高版本回默认', stable(resolveConfig({ 'version-9': { whatever: true } })) === DEFAULT_STABLE, resolveConfig({ 'version-9': { whatever: true } }))
-    check('非法快照回默认', stable(resolveConfig({ 'version-1': 'garbage' })) === DEFAULT_STABLE, resolveConfig({ 'version-1': 'garbage' }))
+    check('非法快照回默认', stable(resolveConfig({ 'version-2': 'garbage' })) === DEFAULT_STABLE, resolveConfig({ 'version-2': 'garbage' }))
     check('段为数组/非对象回默认', stable(resolveConfig([])) === DEFAULT_STABLE, resolveConfig([]))
 }

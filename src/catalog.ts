@@ -20,13 +20,14 @@ export function setCatalog(indexed: IndexedCatalog): void {
     indexedCache = indexed
 }
 
-/** 解析 models.dev 单条模型数据为推理与容量结果；无有效信息返回 undefined */
+/** 解析 models.dev 单条模型数据为推理、容量与模态结果；无有效信息返回 undefined */
 function fromApiEntry(entry: unknown): ModelEntry | undefined {
     if (!isPlainObject(entry)) return
-    const { reasoning, reasoning_options: rawOptions, limit } = entry as {
+    const { reasoning, reasoning_options: rawOptions, limit, modalities } = entry as {
         reasoning?: boolean
         reasoning_options?: unknown
         limit?: unknown
+        modalities?: unknown
     }
     const options = Array.isArray(rawOptions) ? rawOptions : []
     const efforts: string[] = []
@@ -45,18 +46,22 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
     const limitRecord = isPlainObject(limit) ? limit : undefined
     const contextWindow = typeof limitRecord?.context === 'number' ? limitRecord.context : undefined
     const maxTokens = typeof limitRecord?.output === 'number' ? limitRecord.output : undefined
-    // 有推理级别或容量信息才算有效数据
+    // 图片模态（modalities.input 含 'image'）：仅记录支持图片的模型（置 true）；
+    // 不含 image、无数组或空数组均省略（不缓存 false，控制体积）；pdf/video/audio 等其他值忽略
+    const rawInput = isPlainObject(modalities) && Array.isArray(modalities.input) ? modalities.input : undefined
+    const image = rawInput && rawInput.includes('image')
+    // 有推理级别、容量或图片支持才算有效数据
     const hasReasoning = reasoning === true && (toggle || efforts.length > 0)
     const hasContext = contextWindow !== undefined || maxTokens !== undefined
-    if (!hasReasoning && !hasContext) return
-    return { reasoning: hasReasoning, toggle, efforts, contextWindow, maxTokens }
+    if (!hasReasoning && !hasContext && !image) return
+    return { reasoning: hasReasoning, toggle, efforts, contextWindow, maxTokens, image }
 }
 
 /**
- * 将 models.dev 原始 JSON 拍平为缓存数组：仅保留有可用推理级别或容量数据的模型；
+ * 将 models.dev 原始 JSON 拍平为缓存数组：仅保留有可用推理级别、容量或支持图片的模型；
  * efforts 过滤为 harness 支持的取值并统一 'off' 拼写为 'none'，toggle 且无关闭标记时补 'none'。
  */
-function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
+export function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
     const catalog: Catalog = []
     for (const [provider, block] of Object.entries(api ?? {})) {
         if (!isPlainObject(block)) continue
@@ -74,11 +79,12 @@ function buildCatalog(api: Record<string, unknown> | undefined): Catalog {
             ]
             if (parsed.toggle && !efforts.includes('none')) efforts.unshift('none')
             const hasUsableReasoning = parsed.reasoning && efforts.some((effort) => effort !== 'none')
-            // 仅有 none 的推理能力（无可选档位）不视为推理数据，但容量字段仍可入库
-            if (!hasUsableReasoning && parsed.contextWindow === undefined && parsed.maxTokens === undefined) continue
+            // 仅有 none 的推理能力（无可选档位）不视为推理数据，但容量或图片支持仍可入库
+            if (!hasUsableReasoning && parsed.contextWindow === undefined && parsed.maxTokens === undefined && !parsed.image) continue
             const result: CacheEntry = { provider, id, efforts: hasUsableReasoning ? efforts : [] }
             if (parsed.contextWindow !== undefined) result.contextWindow = parsed.contextWindow
             if (parsed.maxTokens !== undefined) result.maxTokens = parsed.maxTokens
+            if (parsed.image) result.image = parsed.image
             catalog.push(result)
         }
     }

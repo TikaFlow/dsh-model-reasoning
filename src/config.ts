@@ -5,8 +5,8 @@ import { isPlainObject } from './types'
 
 /** 默认配置：填充缺失开启，覆盖更新关闭 */
 export const DEFAULT_CONFIG: PluginConfig = {
-    allowUpdate: { reasoning: false, context: false },
-    autoFill: { reasoning: true, context: true },
+    allowUpdate: { reasoning: false, context: false, image: false },
+    autoFill: { reasoning: true, context: true, image: true },
 }
 
 /** 命名空间下的默认段值（版本快照容器） */
@@ -16,6 +16,7 @@ export const DEFAULT_SECTION: VersionedSection = {}
 const fieldRules = (dflt: boolean): z<FieldRules> => z.object({
     reasoning: z.boolean().default(dflt),
     context: z.boolean().default(dflt),
+    image: z.boolean().default(dflt),
 })
 
 /**
@@ -23,8 +24,8 @@ const fieldRules = (dflt: boolean): z<FieldRules> => z.object({
  * 字段整体缺失时落该项默认。
  */
 const PluginConfigSchema: z<PluginConfig> = z.object({
-    allowUpdate: fieldRules(false).default({ reasoning: false, context: false }),
-    autoFill: fieldRules(true).default({ reasoning: true, context: true }),
+    allowUpdate: fieldRules(false).default({ reasoning: false, context: false, image: false }),
+    autoFill: fieldRules(true).default({ reasoning: true, context: true, image: true }),
 })
 
 /** 命名空间整段的 schema：宽松字典，保证比当前代码更新的版本快照也能通过注册校验 */

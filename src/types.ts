@@ -1,6 +1,6 @@
 /** 共享类型定义与纯类型守卫 */
 
-/** models.dev 单条条目的推理与容量解析结果 */
+/** models.dev 单条条目的推理、容量与模态解析结果 */
 export interface ModelEntry {
     reasoning: boolean
     toggle: boolean
@@ -9,6 +9,8 @@ export interface ModelEntry {
     contextWindow?: number
     /** 最大输出 tokens，models.dev 未提供时为 undefined */
     maxTokens?: number
+    /** 支持图片输入（modalities.input 含 'image'）时为 true；纯文本或未提供模态信息均为 undefined */
+    image?: boolean
 }
 
 /** 缓存条目：已拍平并过滤，仅保留填充所需字段 */
@@ -21,6 +23,8 @@ export interface CacheEntry {
     contextWindow?: number
     /** 最大输出 tokens，仅当 models.dev 提供 */
     maxTokens?: number
+    /** 支持图片输入时为 true；纯文本模型省略此字段（不缓存 false，控制体积） */
+    image?: boolean
 }
 
 /** 拍平缓存：每条为 provider/id/efforts 及可选容量字段 */
@@ -67,6 +71,24 @@ export interface LegacyConfig {
     autoFill: LegacyFieldSwitch
 }
 
+// ---------- LEGACY（v1）：version-1 快照的冻结形态（对应引入 image 前的配置）。 ----------
+// ---------- 定义不随代码演进；MIN_SUPPORTED_VERSION 超过 1 时本段与 migrate.ts 的 upgrade1To2 一并移除 ----------
+
+/** LEGACY(v1)：按字段分别控制的规则（无 image 字段） */
+export interface V1FieldRules {
+    /** 推理级别字段 */
+    reasoning: boolean
+    /** 上下文窗口与输出上限，二者一体受此开关控制 */
+    context: boolean
+}
+
+/** LEGACY(v1)：version-1 快照的完整形态 */
+export interface V1PluginConfigSnapshot {
+    configVersion: number
+    allowUpdate: V1FieldRules
+    autoFill: V1FieldRules
+}
+
 // ---------- 当前版本随升级链持续演进 ----------
 
 /** 按字段分别控制的规则开关 */
@@ -75,6 +97,8 @@ export interface FieldRules {
     reasoning: boolean
     /** 上下文窗口与输出上限，二者一体受此开关控制 */
     context: boolean
+    /** 图片/多模态（input 模态声明） */
+    image: boolean
 }
 
 /** 当前运行时配置（仅对象写法） */
