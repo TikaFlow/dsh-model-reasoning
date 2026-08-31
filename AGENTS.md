@@ -29,7 +29,7 @@ DSH 插件：为所有非官方（自定义）提供商的模型自动填充推�
 
 ## 核心逻辑
 
-- **自有配置（`model-reasoning` 命名空间）**：通过 `installSettingsSection` 注册到 settings，可在 `settings.yaml` 中编辑或将来通过 Web 设置页开关控制；当前配置项 `autoFill`（默认 `true`）与 `allowUpdate`（默认 `false`）均为布尔值统一开关，或对象 `{ reasoning, context }` 按字段分别控制——`autoFill` 控制是否自动填充缺失字段，`allowUpdate` 控制是否以 models.dev 最新数据为准更新已有配置（未声明字段等同 `false`，不覆盖已有值）
+- **自有配置（`model-reasoning` 命名空间）**：通过 `installSettingsSection` 注册到 settings，可在 `settings.yaml` 中编辑或将来通过 Web 设置页开关控制；当前配置项 `autoFill`（默认 `true`）与 `allowUpdate`（默认 `false`）均为布尔值统一开关，或对象 `{ reasoning, context }` 按字段分别控制——`autoFill` 控制是否自动填充缺失字段，`allowUpdate` 控制是否以 models.dev 最新数据为准更新已有配置（对象写法内未声明的字段跟随各自整项默认：`autoFill` 等同 `true`、`allowUpdate` 等同 `false`，不覆盖已有值）
 - 数据加载（`readCache` / `fetchLatest`）：缓存为 models.dev 处理后拍平数组（每条 provider/id/efforts/contextWindow/maxTokens，全量模型入库，仅当无推理级别且无容量字段时剪裁）；`readCache`（异步读取）校验解析结果为非空数组即构建分组索引（旧格式或坏数据一律失效，交由网络拉取自愈）；缓存可用则立即用缓存填充，再异步拉取 models.dev 原始 JSON（解析拍平后仅当数据非空才替换内存索引并覆盖缓存，内容无变化则跳过写入；拉取失败以固定 5s 间隔重试最多 3 次，仍失败仅记录日志、继续使用现有目录；覆盖缓存的写入失败同样以固定 5s 间隔重试最多 3 次，仍失败仅记录日志，不影响本次运行）；缓存不可用（理论上不会发生，构建已保留缓存）则直接拉取最新数据填充并更新缓存；目录以内存常驻形式供每次填充复用，首次由缓存或网络初始化，此后仅被异步刷新结果整体替换
 - 填充流程（`update`）：读取 settings 命名空间 `llm-pi-ai` 的 `providers[*].models` 及描述符 revision，对缺少 `reasoningEfforts` / `contextWindow` / `maxTokens` 的模型查找目录（`lookup` 优先按 provider+modelId 匹配，失败再仅按 modelId 全局匹配），生成推理级别或容量值并按 provider 整段写回 `providers[providerId].models` 数组（其余模型字段原样保留；路径 op 不支持数组下标中间段）；填充缺失字段受 `autoFill` 对应字段控制，覆盖更新仅当 `allowUpdate` 对应字段开启且新值合法（`efforts` 经 `isPlainObject` 校验、容量为数字），新旧值相同则跳过；写回携带 revision 做并发冲突校验，冲突时重读重算（限次）
 - 生命周期（`apply`）：`inject: ['settings']` 保证服务已就绪；`settings/updated` 事件监听配置变更后再次填充；首轮缓存读取与异步刷新统一由 effect 管理（异步读到缓存后立即用缓存填充，填充完成后链式拉取最新数据；卸载时置位，在途读取/刷新结果不再触碰已卸载的上下文）

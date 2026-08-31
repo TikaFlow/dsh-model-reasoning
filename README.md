@@ -14,13 +14,22 @@
 
 ## 安装
 
+-  通过插件市场安装（推荐）
+
+> 使用 `dsh-market` 插件市场安装时无需重启 DSH 即生效。
+
+-  通过命令行安装
+
 ```bash
 dsh plugin --profile web add github:TikaFlow/dsh-model-reasoning
+
+# 重启 DSH 
+dsh web
 ```
 
 ## 使用说明
 
-无需任何操作，重启 DSH 后插件即自动生效：支持推理级别的模型将会自动填充推理级别，可在界面中选择；缺失上下文的模型将自动补全 `contextWindow` / `maxTokens`。
+无需任何操作，进入 DSH 后插件即自动生效：支持推理级别的模型将会自动填充推理级别，可在界面中选择；缺失上下文的模型将自动补全 `contextWindow` / `maxTokens`。
 
 ### 配置
 
@@ -37,15 +46,15 @@ model-reasoning:
   allowUpdate: true
 ```
 
-对象写法（按字段分别控制）：
+或者，对象写法（精细控制）。省略字段的默认值跟随整项默认值：
 
 ```yaml
 # 建议直接复制，注意开头不要有空格
 model-reasoning:
   autoFill:
-    reasoning: true   # 填充缺失的推理级别档位；未声明等同 false
-    context: true     # 填充缺失的 contextWindow/maxTokens；未声明等同 false
+    reasoning: true   # 填充缺失的推理级别档位；默认 true
+    context: true     # 填充缺失的 contextWindow/maxTokens；默认 true
   allowUpdate:
-    reasoning: true   # 同步已有模型的推理级别档位；未声明等同 false
-    context: false    # 不同步已有模型的 contextWindow/maxTokens（仍会填充缺失值）
+    reasoning: true   # 同步已有模型的推理级别档位；默认 false
+    context: false    # 不同步已有模型的 contextWindow/maxTokens；默认 false
 ```
