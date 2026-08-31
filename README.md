@@ -7,10 +7,10 @@
 ## 功能
 
 - 进入插件时优先使用构建附带的 models.dev 缓存（解析为非空数组才算可用）立即填充，避免启动时等待网络
-- 首轮填充完成后异步拉取 models.dev 最新数据：成功则更新缓存并再次填充；失败以固定 5 秒间隔重试最多 3 次，仍失败仅记录日志、继续使用现有目录
-- 监听 `settings/updated` 事件，模型配置变更后自动重新填充
-- 为缺失推理级别的模型填充 `reasoningEfforts`，为缺失容量字段的模型填充 `contextWindow` / `maxTokens`；已有配置不受影响
-- 支持通过自有配置控制行为：`autoFill` 控制是否自动填充缺失字段（默认开启），`allowUpdate` 开启后以 models.dev 最新数据为准同步已有模型的推理级别与容量字段
+- 首轮填充完成后异步拉取最新数据：成功则更新缓存并再次填充；失败则重试
+- 监听模型配置变化后自动重新填充
+- 填充内容包括 `reasoningEfforts`、 `contextWindow` / `maxTokens`；已有配置不受影响
+- 支持通过自有配置控制行为：`autoFill` 控制是否自动填充，`allowUpdate` 控制是否同步最新数据（可能覆盖手动修改的模型参数）
 - 配置存放在独立命名空间，插件升级时自动迁移旧配置，回退旧版本亦不受影响，全程无需手动处理
 
 ## 安装
@@ -34,10 +34,9 @@ dsh web
 
 ### 配置
 
-在 Web 设置界面右上角点击「打开配置文件 / Open configuration file」直接编辑 `settings.yaml`，在文件末尾添加：
+在 Web 设置界面右上角点击「打开配置文件 / Open configuration file」直接编辑 `settings.yaml`，找到以下内容修改：
 
 ```yaml
-# 建议直接复制，注意开头不要有空格
 tikaflow-model-fix:
   version-1:
     autoFill:
@@ -48,4 +47,4 @@ tikaflow-model-fix:
       context: false    # 不同步已有模型的 contextWindow/maxTokens；默认 false
 ```
 
-> 旧版本 `model-reasoning` 命名空间下的配置（含布尔写法）会自动迁移为上述对象形态，无需手动处理；旧配置段会留在文件中，确认无误后可自行删除。
+> 旧版本 `model-reasoning` 命名空间下的配置会自动迁移为上述对象形态，无需手动处理；旧配置段会留在文件中，确认无误后可自行删除。
