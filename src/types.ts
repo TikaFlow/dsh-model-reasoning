@@ -1,5 +1,7 @@
 /** 共享类型定义与纯类型守卫 */
 
+import { CAPACITY_UNLIMITED } from './constants'
+
 /** models.dev 单条条目的推理、容量与模态解析结果 */
 export interface ModelEntry {
     reasoning: boolean
@@ -47,6 +49,11 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
     const proto: unknown = Object.getPrototypeOf(value)
     return proto === Object.prototype || proto === null
+}
+
+/** 判断是否为可写回的容量值：正整数且非哨兵（harness schema 要求 step(1).min(1)；0 与 99999999 均视为无数据） */
+export function isCapacity(value: unknown): value is number {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 && value !== CAPACITY_UNLIMITED
 }
 
 // ---------- LEGACY（v0）：旧命名空间（model-reasoning）配置的冻结形态（对应插件 0.5.6 的 schema）。 ----------

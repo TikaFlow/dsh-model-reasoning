@@ -5,7 +5,7 @@ import { getCatalog } from './catalog'
 import { lookup, toReasoningEfforts } from './lookup'
 import { API_NS, MAX_ATTEMPTS, PLUGIN_NAME } from './constants'
 import { getConfig } from './config'
-import { isPlainObject } from './types'
+import { isCapacity, isPlainObject } from './types'
 
 /** 剔除空 input/compat：两者在 harness 语义上等同缺失，删除无损，操作幂等 */
 function stripEmptyArtifacts(model: Record<string, unknown>): Record<string, unknown> {
@@ -79,18 +79,19 @@ export async function fix(ctx: Context): Promise<void> {
                 const reasoningUpdatable = allowRules.reasoning
                     && !deepEqualJson(reasoningEfforts, efforts)
                     && isPlainObject(efforts)
+                // 容量新值须为正整数且非哨兵（存量旧缓存可能仍带 0/99999999，写 0 会被 schema 拒绝并连累整批）
                 const ctxW = entry?.contextWindow
                 const maxT = entry?.maxTokens
                 const contextFillable = autoRules.context
-                    && contextWindow === undefined && typeof ctxW === 'number'
+                    && contextWindow === undefined && isCapacity(ctxW)
                 const contextUpdatable = allowRules.context
                     && ctxW !== contextWindow
-                    && typeof ctxW === 'number'
+                    && isCapacity(ctxW)
                 const maxTokensFillable = autoRules.context
-                    && maxTokens === undefined && typeof maxT === 'number'
+                    && maxTokens === undefined && isCapacity(maxT)
                 const maxTokensUpdatable = allowRules.context
                     && maxT !== maxTokens
-                    && typeof maxT === 'number'
+                    && isCapacity(maxT)
                 const imageFillable = autoRules.image
                     && input === undefined && !!inputValue
                 const imageUpdatable = allowRules.image

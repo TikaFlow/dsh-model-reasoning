@@ -21,6 +21,9 @@ export const MAX_OLD_SNAPSHOTS = 3
 /** 版本快照键前缀，段内键形如 version-N */
 export const VERSION_PREFIX = 'version-'
 
+/** models.dev 容量字段对"无限/未公布"的哨兵建模值，视为无数据 */
+export const CAPACITY_UNLIMITED = 99_999_999
+
 export const API_URL = 'https://models.dev/api.json'
 export const FETCH_MS = 10_000
 /** 拉取、缓存写入与填充冲突共用的总尝试次数；固定重试间隔用于拉取与缓存写入 */

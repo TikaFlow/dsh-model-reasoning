@@ -2,7 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import { API_URL, CACHE_FILE, FETCH_MS, LEVELS, MAX_ATTEMPTS, PLUGIN_NAME, RETRY_DELAY_MS } from './constants'
 import type { CacheEntry, Catalog, IndexedCatalog, ModelEntry, ProviderGroup } from './types'
-import { isPlainObject } from './types'
+import { isCapacity, isPlainObject } from './types'
 
 /** 目录尚未可用时的空兜底 */
 const EMPTY_INDEX: IndexedCatalog = { catalog: [], groups: new Map() }
@@ -42,10 +42,12 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
             }
         }
     }
-    // 容量字段（limit.context / limit.output）
+    // 容量字段（limit.context / limit.output）：非正整数与 99999999 哨兵（"无限/未公布"建模）视为无数据
     const limitRecord = isPlainObject(limit) ? limit : undefined
-    const contextWindow = typeof limitRecord?.context === 'number' ? limitRecord.context : undefined
-    const maxTokens = typeof limitRecord?.output === 'number' ? limitRecord.output : undefined
+    const rawContext = limitRecord?.context
+    const rawOutput = limitRecord?.output
+    const contextWindow = isCapacity(rawContext) ? rawContext : undefined
+    const maxTokens = isCapacity(rawOutput) ? rawOutput : undefined
     // 图片模态（modalities.input 含 'image'）：仅记录支持图片的模型（置 true）；
     // 不含 image、无数组或空数组均省略（不缓存 false，控制体积）；pdf/video/audio 等其他值忽略
     const rawInput = isPlainObject(modalities) && Array.isArray(modalities.input) ? modalities.input : undefined
