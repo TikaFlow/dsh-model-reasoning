@@ -51,7 +51,17 @@ export function run(): void {
     // 默认快照与升级链的一致性（全新用户直写默认 vs 空配置走升级链，结果必须相同）
     check('DEFAULT_STORED 与升级链空输入一致', stable(DEFAULT_STORED) === stable(upgradeConfig({}, 0)), { DEFAULT_STORED, chain: upgradeConfig({}, 0) })
 
-    // pruneOps：只淘汰低于当前版本的超限快照，等于/高于当前版本永不清理
-    check('高版本不参与清理', pruneOps([0, 1, 5, 6, 7]).length === 0, pruneOps([0, 1, 5, 6, 7]))
-    check('低版本未超限不清理', pruneOps([0, 1]).length === 0, pruneOps([0, 1]))
+    // pruneOps：两阶段清理——先淘汰低于最低支持版本（Phase A），再淘汰低于当前版本且超出保留上限的 excess（Phase B）；
+    // 等于/高于当前版本永不清理；v0 位于 LEGACY、不在 PLUGIN_NS 版本列表内，故不在此处理
+    check('当前与高版本不参与清理', pruneOps([2, 5, 6, 7]).length === 0, pruneOps([2, 5, 6, 7]))
+    check('低版本未超限不清理', pruneOps([1]).length === 0, pruneOps([1]))
+    check('Phase A 清理低于最低支持版本', stable(pruneOps([1, 2, 3, 4], 5, 3, 3)) === stable([
+        { op: 'unset', path: ['version-1'] }, { op: 'unset', path: ['version-2'] },
+    ]), pruneOps([1, 2, 3, 4], 5, 3, 3))
+    check('Phase B 超限淘汰最低', stable(pruneOps([1, 2, 3, 4], 5, 0, 3)) === stable([
+        { op: 'unset', path: ['version-1'] },
+    ]), pruneOps([1, 2, 3, 4], 5, 0, 3))
+    check('两阶段叠加（A 先于 B）', stable(pruneOps([1, 2, 3, 4, 5, 6], 7, 3, 3)) === stable([
+        { op: 'unset', path: ['version-1'] }, { op: 'unset', path: ['version-2'] }, { op: 'unset', path: ['version-3'] },
+    ]), pruneOps([1, 2, 3, 4, 5, 6], 7, 3, 3))
 }
