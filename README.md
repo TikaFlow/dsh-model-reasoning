@@ -4,6 +4,11 @@
 
 > 本插件已被 [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) 收录，同时可在 [dsh-market](https://github.com/dsh-market/dsh-market) 中搜索、安装。
 
+配置界面截图：
+
+![浅色主题设置卡片](screenshot/light.png)
+![深色主题设置卡片](screenshot/dark.png)
+
 ## 功能
 
 - 进入插件时优先使用构建附带的 models.dev 缓存（解析为非空数组才算可用）立即填充，避免启动时等待网络
@@ -38,16 +43,6 @@ dsh web
 ### 配置
 
 **图形界面（推荐）**：Web 设置 →「模型」→ 页面底部「模型参数填充」卡片，修改后点击「应用」保存并自动重新填充模型参数，未应用直接关闭视为放弃。
-
-中文 · 浅色 / 中文 · 深色：
-
-![中文浅色主题设置卡片](screenshot/zh-light.png)
-![中文深色主题设置卡片](screenshot/zh-dark.png)
-
-English · Light / English · Dark：
-
-![英文浅色主题设置卡片](screenshot/en-light.png)
-![英文深色主题设置卡片](screenshot/en-dark.png)
 
 **手动编辑**（等效方式）：在 Web 设置界面右上角点击「打开配置文件 / Open configuration file」直接编辑 `settings.yaml`，找到以下内容修改：
 

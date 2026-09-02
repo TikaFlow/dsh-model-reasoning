@@ -36,7 +36,7 @@ const STYLE_ID = 'dsh-model-reasoning-card-css'
 
 /** 内嵌样式表（类名 dsh-mr- 前缀防撞；颜色全部走 --dsw-alias-* 令牌带字面兜底，深浅色由宿主令牌自动切换） */
 const STYLE_TEXT = [
-    '.dsh-mr-card{display:flex;flex-direction:column;gap:12px;max-width:720px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08))}',
+    '.dsh-mr-card{display:flex;flex-direction:column;gap:12px;max-width:720px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-module-platform,#f5f6f7);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08))}',
     '.dsh-mr-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#1a1a1a)}',
     '.dsh-mr-grid{display:flex;flex-direction:column}',
     '.dsh-mr-row{display:grid;grid-template-columns:minmax(0,1fr) 140px 140px;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08))}',
