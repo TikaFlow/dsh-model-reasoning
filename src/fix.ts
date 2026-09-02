@@ -37,14 +37,17 @@ function isSettingsConflict(error: unknown): boolean {
  * 遍历配置的模型写回变更：缺失推理级别/容量/图片模态且有数据则填充，开启 allowUpdate 则同步最新值，
  * 并剔除空 input/compat。读 descriptor.user（原始字段）整段写回 models（路径 op
  * 不支持数组下标中继）；数据无档位不删除已有配置。
+ * force=true 单次绕过 allowUpdate 门控（等价三项临时为 true，不落存储、不影响常规调用），
+ * 供浏览器半「强制更新」RPC 使用。返回本次变更的模型数；写回失败（冲突重试用尽等）
+ * 先告警再抛出，由调用方决定后续处理。
  */
-export async function fix(ctx: Context): Promise<void> {
+export async function fix(ctx: Context, force = false): Promise<number> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         // 冲突重试时重读，获取最新 revision
         const descriptor = ctx.settings.describe().find((d) => d.ns === API_NS)
-        if (!descriptor) return
+        if (!descriptor) return 0
         const providers = (descriptor.user as { providers?: Record<string, unknown> } | undefined)?.providers
-        if (!isPlainObject(providers)) return
+        if (!isPlainObject(providers)) return 0
         const cfg = getConfig()
         const allowRules = cfg.allowUpdate
         const autoRules = cfg.autoFill
@@ -76,7 +79,7 @@ export async function fix(ctx: Context): Promise<void> {
                 // 推理级别
                 const reasoningFillable = autoRules.reasoning
                     && reasoningEfforts === undefined && !!efforts
-                const reasoningUpdatable = allowRules.reasoning
+                const reasoningUpdatable = (force || allowRules.reasoning)
                     && !deepEqualJson(reasoningEfforts, efforts)
                     && isPlainObject(efforts)
                 // 容量新值须为正整数且非哨兵（存量旧缓存可能仍带 0/99999999，写 0 会被 schema 拒绝并连累整批）
@@ -84,17 +87,17 @@ export async function fix(ctx: Context): Promise<void> {
                 const maxT = entry?.maxTokens
                 const contextFillable = autoRules.context
                     && contextWindow === undefined && isCapacity(ctxW)
-                const contextUpdatable = allowRules.context
+                const contextUpdatable = (force || allowRules.context)
                     && ctxW !== contextWindow
                     && isCapacity(ctxW)
                 const maxTokensFillable = autoRules.context
                     && maxTokens === undefined && isCapacity(maxT)
-                const maxTokensUpdatable = allowRules.context
+                const maxTokensUpdatable = (force || allowRules.context)
                     && maxT !== maxTokens
                     && isCapacity(maxT)
                 const imageFillable = autoRules.image
                     && input === undefined && !!inputValue
-                const imageUpdatable = allowRules.image
+                const imageUpdatable = (force || allowRules.image)
                     && !!inputValue
                     && !deepEqualJson(input, inputValue)
                 if (cleaned === record && !reasoningFillable && !reasoningUpdatable
@@ -113,15 +116,18 @@ export async function fix(ctx: Context): Promise<void> {
                 ops.push({ op: 'set', path: ['providers', providerId, 'models'], value: next })
             }
         }
-        if (ops.length === 0) return
+        if (ops.length === 0) return 0
         try {
             await ctx.settings.mutate(API_NS, ops, descriptor.revision)
             ctx.logger.info(`${PLUGIN_NAME}: 已变更 ${changes} 个模型（补充/同步推理级别、容量字段、图片模态、清理空字段）`)
-            return
+            return changes
         } catch (error) {
             if (isSettingsConflict(error) && attempt < MAX_ATTEMPTS) continue
             ctx.logger.warn(`${PLUGIN_NAME}: ${error instanceof Error ? error.message : String(error)}`)
-            return
+            // 已告警仍抛出：调用方按需处理（RPC 回传错误 / 事件侧吞掉），不静默吞错
+            throw error
         }
     }
+    // 不可达：循环内各路径均 return/throw，continue 仅在 attempt < MAX_ATTEMPTS 时发生；仅作类型收敛
+    return 0
 }

@@ -19,6 +19,12 @@ export type CardKey =
     | 'rowImage'
     | 'apply'
     | 'saving'
+    | 'force'
+    | 'forceBusy'
+    | 'forceConfirm'
+    | 'forceDone'
+    | 'forceNone'
+    | 'forceFailed'
     | 'loading'
     | 'unavailable'
     | 'readOnly'
@@ -53,6 +59,12 @@ export const zh: Record<CardKey, string> = {
     rowImage: '图片输入',
     apply: '应用',
     saving: '保存中…',
+    force: '强制更新',
+    forceBusy: '更新中…',
+    forceConfirm: '将按 models.dev 目录当前值强制覆盖各字段（忽略「允许更新」设置，不改变该设置本身）。确定继续？',
+    forceDone: '已强制更新 {count} 个模型',
+    forceNone: '目录值与现有配置一致，无需变更',
+    forceFailed: '强制更新失败：{message}',
     loading: '正在读取配置…',
     unavailable: '配置不可用（未检测到插件的宿主服务）',
     readOnly: '当前环境为只读，无法保存',
@@ -69,6 +81,12 @@ export const en: Record<CardKey, string> = {
     rowImage: 'Image input',
     apply: 'Apply',
     saving: 'Saving…',
+    force: 'Force update',
+    forceBusy: 'Updating…',
+    forceConfirm: 'Overwrite model fields with current models.dev catalog values regardless of "Allow update" (the setting itself is unchanged). Continue?',
+    forceDone: 'Force-updated {count} model(s)',
+    forceNone: 'Catalog values match; nothing to update',
+    forceFailed: 'Force update failed: {message}',
     loading: 'Loading settings…',
     unavailable: 'Settings unavailable (host plugin service not found)',
     readOnly: 'Read-only environment; cannot save',

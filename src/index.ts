@@ -5,17 +5,23 @@ import { LEGACY_NS, PLUGIN_NS, API_NS, PLUGIN_NAME } from './constants'
 import { DEFAULT_SECTION, SectionSchema, resolveConfig, setConfigSource } from './config'
 import { LegacyConfigSchema, LEGACY_BASE, isNamespaceRegistered, migrateConfig, waitForSettingsReady } from './migrate'
 import { refresh } from './refresh'
+import { installRpc } from './rpc'
 import { fix } from './fix'
 
 export const name = PLUGIN_NAME
-export const inject = ['settings']
+export const inject = ['settings', 'connection']
+
+/** 吞掉 fix 写回失败的 rejection（失败日志已在 fix 内告警，避免未处理拒绝） */
+function swallowFixError(): void {
+    /* 无需额外动作 */
+}
 
 export function apply(ctx: Context) {
     // 注册自有配置命名空间：段为版本快照容器，setSource 解析出运行时配置，onChange 响应配置变更
     installSettingsSection(ctx, PLUGIN_NS, SectionSchema, DEFAULT_SECTION, {
         setSource: (current) => { setConfigSource(() => resolveConfig(current())) },
         // 插件配置变化时重新填充（fix 内部对无变更字段自然跳过）
-        onChange: () => { fix(ctx) },
+        onChange: () => { fix(ctx).catch(swallowFixError) },
     })
     // 注册旧命名空间 shim（冻结 v0 schema，仅供迁移读取）。注册及其失败（冲突/存储段非法）都在
     // 子 fiber 微任务内发生，故其结果在下方启动 effect 就绪后用 isNamespaceRegistered 检测
@@ -26,8 +32,10 @@ export function apply(ctx: Context) {
     // llm-pi-ai 模型配置变更后重新填充
     ctx.on('settings/updated', (ns) => {
         if (ns !== API_NS) return
-        fix(ctx)
+        fix(ctx).catch(swallowFixError)
     })
+    // 浏览器半「强制更新」RPC channel（写回结果经 ConnectionRpcResult 回传卡片）
+    installRpc(ctx)
     // 首轮：等待自有命名空间注册完成 → 配置迁移 → 缓存读取 → 填充 → 异步刷新，统一由 effect 管理
     // （注册经 installSettingsSection 的子 fiber 延迟到微任务，必须等其完成后再迁移，否则 describe() 读空）
     // 卸载时置位，在途结果不触碰已卸载的上下文；迁移失败仅告警、按当前生效配置继续

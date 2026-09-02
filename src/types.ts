@@ -125,3 +125,33 @@ export interface PluginConfigSnapshot {
 
 /** 命名空间下的整段配置：version-N -> 对应版本的配置快照（保留低版本历史与更高新版本，便于无损回退） */
 export type VersionedSection = Record<string, unknown>
+
+// ---------- Connection RPC（强制更新通道）：宿主 @deepseek-ai/dsh-client-connection 契约的结构本地复制。 ----------
+// ---------- 该包依赖链在 npm 上不可解析（transitive 范围仅存在于宿主 monorepo），故不装依赖、仅按结构使用； ----------
+// ---------- 浏览器半仅 type-only 引用（构建期擦除）。宿主契约变化时须同步本段。 ----------
+
+/** Connection RPC 的失败形状（对应宿主 ConnectionRpcFailure） */
+export interface RpcFailure {
+    code: string
+    message: string
+    details: object
+}
+
+/** Connection RPC 端点返回值（对应宿主 ConnectionRpcResult） */
+export type RpcResult<T> =
+    | { readonly ok: true; readonly value: T }
+    | { readonly ok: false; readonly error: RpcFailure }
+
+/** Node 半使用的 ctx.connection.rpc.handle 切片（宿主 HostConnectionRpc.handle） */
+export type HostRpcHandle = (
+    channel: string,
+    handler: (endpoint: string, payload: unknown, signal: AbortSignal) => Promise<RpcResult<unknown>>,
+) => () => Promise<void>
+
+/** 浏览器半使用的 connection.rpc.call 切片（宿主 ClientConnectionRpc.call，仅一元调用） */
+export type ClientRpcCall = (
+    channel: string,
+    endpoint: string,
+    payload: unknown,
+    signal?: AbortSignal,
+) => Promise<RpcResult<unknown>>

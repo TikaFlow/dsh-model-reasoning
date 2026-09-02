@@ -6,7 +6,8 @@
 
 import type { FieldRules, PluginConfig } from '../types'
 
-/** 本插件的配置命名空间（与 src/constants.ts 的 PLUGIN_NS 字面量一致，宿主迁移后仅存本 NS） */
+/** 本插件的配置命名空间（与 src/constants.ts 的 PLUGIN_NS 字面量一致，宿主迁移后仅存本 NS）；
+ * 浏览器半另以 `/${MODEL_FIX_NS}` 拼强制更新 RPC channel，与 src/rpc.ts 的 `/${PLUGIN_NS}` 配对，改动须两侧同步 */
 export const MODEL_FIX_NS = 'tikaflow-model-fix'
 
 /** 当前代码配置版本；与 src/constants.ts 的 CONFIG_VERSION 同步修改 */

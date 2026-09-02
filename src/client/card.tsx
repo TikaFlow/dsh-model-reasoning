@@ -1,12 +1,15 @@
 /**
- * 模型参数填充卡片（浏览器半）：4 行表格（表头为纵向总控，不落存储）+ 应用按钮。
+ * 模型参数填充卡片（浏览器半）：4 行表格（表头为纵向总控，不落存储）+ 强制更新/应用按钮。
  * 本地暂存（draft）：单格/总控点击只改草稿，点「应用」才经 settingsScope 原子写 version-2；
  * 关闭页面即丢弃。每次挂载从宿主快照重新读取（draft 初值为 null 即跟随已存配置）。
+ * 「强制更新」（危险按钮，贴最左）经 Connection RPC 请求 Node 半单次 force 填充，
+ * 结果（变更数/失败原因）显示在 footer 下方提示行，执行前 confirm 二次确认。
  */
 
 import { useState, useSyncExternalStore } from 'react'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
+import type { RpcResult } from '../types'
 import {
     DEFAULT_FLAGS,
     FIELD_KEYS,
@@ -20,10 +23,12 @@ import {
 import type { Column, Flags } from './model'
 import { COLUMN_KEYS, ROW_KEYS } from './locales'
 
-/** 卡片组件 props（t 由 slots.register 的 locale 席位合成注入，scope 由入口闭包传入） */
+/** 卡片组件 props（t 由 slots.register 的 locale 席位合成注入；scope/forceUpdate 由入口闭包传入） */
 export interface CardProps {
     t: TranslateNS<'settings.modelReasoning'>
     scope: SettingsScope<Flags>
+    /** 强制更新 RPC：channel 与端点在入口拼好，卡片只消费结果 */
+    forceUpdate: () => Promise<RpcResult<unknown>>
 }
 
 const STYLE_ID = 'dsh-model-reasoning-card-css'
@@ -46,11 +51,16 @@ const STYLE_TEXT = [
     // 暗色主题镜像浅色观感：圆点整体走黑色系，关/开用不同深度（主题标记见宿主 body[data-ds-dark-theme]）
     'body[data-ds-dark-theme] .dsh-mr-thumb{background:var(--dsw-alias-bg-layer-2,#232326)}',
     'body[data-ds-dark-theme] .dsh-mr-switch[aria-checked="true"] .dsh-mr-thumb{background:var(--dsw-alias-bg-module-platform,#050506)}',
-    '.dsh-mr-footer{display:flex;align-items:center;gap:8px}',
+    '.dsh-mr-footer{display:flex;align-items:center;justify-content:space-between;gap:8px}',
+    '.dsh-mr-actions{display:flex;align-items:center;gap:8px}',
     '.dsh-mr-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#999)}',
-    '.dsh-mr-apply{margin-left:auto;font-size:13px;padding:6px 16px;border:none;border-radius:8px;cursor:pointer;color:var(--dsw-alias-label-primary-foreground,#fff);background:var(--dsw-alias-button-primary-fill,#1a1a1a)}',
+    '.dsh-mr-apply{font-size:13px;padding:6px 16px;border:none;border-radius:8px;cursor:pointer;color:var(--dsw-alias-label-primary-foreground,#fff);background:var(--dsw-alias-button-primary-fill,#1a1a1a)}',
     '.dsh-mr-apply:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#333)}',
     '.dsh-mr-apply:disabled{opacity:.45;cursor:default}',
+    // 危险操作按钮：红底白字（state-error-primary 令牌随宿主深浅色自适应），与常规按钮同款尺寸
+    '.dsh-mr-force{font-size:13px;padding:6px 16px;border:none;border-radius:8px;cursor:pointer;color:var(--dsw-alias-label-primary-foreground,#fff);background:var(--dsw-alias-state-error-primary,#d92d24)}',
+    '.dsh-mr-force:hover:not(:disabled){filter:brightness(.9)}',
+    '.dsh-mr-force:disabled{opacity:.45;cursor:default}',
 ].join('\n')
 
 /** 幂等注入样式（模块级守护，重复挂载不重复插入） */
@@ -67,6 +77,11 @@ function ensureStyles(): void {
     tag.textContent = STYLE_TEXT
     document.head.appendChild(tag)
     stylesInjected = true
+}
+
+/** 失败信息截断（提示行为小字，防长消息撑爆卡片） */
+function truncateMessage(value: string): string {
+    return value.length > 120 ? `${value.slice(0, 119)}…` : value
 }
 
 /** 自绘开关（全仓范式：button role=switch + aria-checked，无现成组件可复用） */
@@ -99,6 +114,9 @@ export function Card(props: CardProps) {
     // draft === null 表示未编辑、跟随已存值；首次点击即冻结当前显示值为草稿
     const [draft, setDraft] = useState<Flags | null>(null)
     const [submitting, setSubmitting] = useState(false)
+    // 强制更新执行态与结果提示（常驻至下次点击，null 不渲染）
+    const [forceBusy, setForceBusy] = useState(false)
+    const [forceResult, setForceResult] = useState<string | null>(null)
 
     if (snap.status === 'unavailable') {
         return (
@@ -136,6 +154,30 @@ export function Card(props: CardProps) {
             })
             .finally(() => {
                 setSubmitting(false)
+            })
+    }
+    // 危险操作：confirm 二次确认后经 RPC 触发 Node 半单次 force 填充；
+    // 不依赖 canWrite/dirty（不改配置本身，只按目录覆盖写回模型字段）
+    const onForce = () => {
+        if (!ready || forceBusy || submitting) return
+        if (!window.confirm(t('forceConfirm'))) return
+        setForceBusy(true)
+        setForceResult(null)
+        props.forceUpdate()
+            .then((result) => {
+                if (result.ok) {
+                    const changed = (result.value as { changed?: number } | undefined)?.changed ?? 0
+                    setForceResult(changed > 0 ? t('forceDone', { count: changed }) : t('forceNone'))
+                } else {
+                    setForceResult(t('forceFailed', { message: truncateMessage(result.error.message) }))
+                }
+            })
+            .catch((error: unknown) => {
+                // 传输层失败（HTTP 非 2xx 等）call 直接 reject，与 ok:false 同一路径展示
+                setForceResult(t('forceFailed', { message: truncateMessage(error instanceof Error ? error.message : String(error)) }))
+            })
+            .finally(() => {
+                setForceBusy(false)
             })
     }
 
@@ -189,16 +231,27 @@ export function Card(props: CardProps) {
                 ))}
             </div>
             <div className="dsh-mr-footer">
-                {ready && !snap.writable ? <span className="dsh-mr-hint">{t('readOnly')}</span> : null}
                 <button
                     type="button"
-                    className="dsh-mr-apply"
-                    disabled={!canWrite || !dirty || submitting}
-                    onClick={onApply}
+                    className="dsh-mr-force"
+                    disabled={!ready || forceBusy || submitting}
+                    onClick={onForce}
                 >
-                    {submitting ? t('saving') : t('apply')}
+                    {forceBusy ? t('forceBusy') : t('force')}
                 </button>
+                <span className="dsh-mr-actions">
+                    {ready && !snap.writable ? <span className="dsh-mr-hint">{t('readOnly')}</span> : null}
+                    <button
+                        type="button"
+                        className="dsh-mr-apply"
+                        disabled={!canWrite || !dirty || submitting || forceBusy}
+                        onClick={onApply}
+                    >
+                        {submitting ? t('saving') : t('apply')}
+                    </button>
+                </span>
             </div>
+            {forceResult !== null ? <div className="dsh-mr-hint">{forceResult}</div> : null}
         </div>
     )
 }
