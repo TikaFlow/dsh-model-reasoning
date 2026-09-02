@@ -22,6 +22,9 @@ export type CardKey =
     | 'force'
     | 'forceBusy'
     | 'forceConfirm'
+    | 'forceCancel'
+    | 'forceGo'
+    | 'close'
     | 'forceDone'
     | 'forceNone'
     | 'forceFailed'
@@ -61,7 +64,10 @@ export const zh: Record<CardKey, string> = {
     saving: '保存中…',
     force: '强制更新',
     forceBusy: '更新中…',
-    forceConfirm: '将按 models.dev 目录当前值强制覆盖各字段（忽略「允许更新」设置，不改变该设置本身）。确定继续？',
+    forceConfirm: '将按 models.dev 目录当前值强制覆盖模型参数（可能覆盖手动配置的参数）。',
+    forceCancel: '取消',
+    forceGo: '确认更新',
+    close: '关闭',
     forceDone: '已强制更新 {count} 个模型',
     forceNone: '目录值与现有配置一致，无需变更',
     forceFailed: '强制更新失败：{message}',
@@ -83,7 +89,10 @@ export const en: Record<CardKey, string> = {
     saving: 'Saving…',
     force: 'Force update',
     forceBusy: 'Updating…',
-    forceConfirm: 'Overwrite model fields with current models.dev catalog values regardless of "Allow update" (the setting itself is unchanged). Continue?',
+    forceConfirm: 'Overwrite model parameters with current models.dev catalog values (manual configuration may be overwritten).',
+    forceCancel: 'Cancel',
+    forceGo: 'Update',
+    close: 'Close',
     forceDone: 'Force-updated {count} model(s)',
     forceNone: 'Catalog values match; nothing to update',
     forceFailed: 'Force update failed: {message}',

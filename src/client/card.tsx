@@ -2,11 +2,12 @@
  * 模型参数填充卡片（浏览器半）：4 行表格（表头为纵向总控，不落存储）+ 强制更新/应用按钮。
  * 本地暂存（draft）：单格/总控点击只改草稿，点「应用」才经 settingsScope 原子写 version-2；
  * 关闭页面即丢弃。每次挂载从宿主快照重新读取（draft 初值为 null 即跟随已存配置）。
- * 「强制更新」（危险按钮，贴最左）经 Connection RPC 请求 Node 半单次 force 填充，
- * 结果（变更数/失败原因）显示在 footer 下方提示行，执行前 confirm 二次确认。
+ * 「强制更新」（危险按钮，贴最左）弹宿主 Modal 二次确认后，经 Connection RPC 请求
+ * Node 半单次 force 填充，结果（变更数/失败原因）以宿主 Toast 原语一次性反馈。
  */
 
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { Button, IconWarningOutline16, Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcResult } from '../types'
@@ -111,9 +112,17 @@ export function Card(props: CardProps) {
     // draft === null 表示未编辑、跟随已存值；首次点击即冻结当前显示值为草稿
     const [draft, setDraft] = useState<Flags | null>(null)
     const [submitting, setSubmitting] = useState(false)
-    // 强制更新执行态与结果提示（常驻至下次点击，null 不渲染）
+    // 强制更新执行态；confirmOpen 控宿主 Modal 二次确认；toast 为一次性结果反馈
+    // （宿主 Toast 原语：seq 自增强刷新重放，failed 挂警示图标，约 4s 自动淡出）
+    const rootRef = useRef<HTMLDivElement | null>(null)
+    const toastSeq = useRef(0)
     const [forceBusy, setForceBusy] = useState(false)
-    const [forceResult, setForceResult] = useState<string | null>(null)
+    const [toast, setToast] = useState<{ seq: number; text: string; failed: boolean } | null>(null)
+    const [confirmOpen, setConfirmOpen] = useState(false)
+    const showNotice = (text: string, failed = false) => {
+        toastSeq.current += 1
+        setToast({ seq: toastSeq.current, text, failed })
+    }
 
     if (snap.status === 'unavailable') {
         return (
@@ -153,25 +162,27 @@ export function Card(props: CardProps) {
                 setSubmitting(false)
             })
     }
-    // 危险操作：confirm 二次确认后经 RPC 触发 Node 半单次 force 填充；
+    // 危险操作：点按钮先弹宿主 Modal 二次确认；确认后经 RPC 触发 Node 半单次 force 填充。
     // 不依赖 canWrite/dirty（不改配置本身，只按目录覆盖写回模型字段）
     const onForce = () => {
         if (!ready || forceBusy || submitting) return
-        if (!window.confirm(t('forceConfirm'))) return
+        setConfirmOpen(true)
+    }
+    const runForce = () => {
+        setConfirmOpen(false)
         setForceBusy(true)
-        setForceResult(null)
         props.forceUpdate()
             .then((result) => {
                 if (result.ok) {
                     const changed = (result.value as { changed?: number } | undefined)?.changed ?? 0
-                    setForceResult(changed > 0 ? t('forceDone', { count: changed }) : t('forceNone'))
+                    showNotice(changed > 0 ? t('forceDone', { count: changed }) : t('forceNone'))
                 } else {
-                    setForceResult(t('forceFailed', { message: truncateMessage(result.error.message) }))
+                    showNotice(t('forceFailed', { message: truncateMessage(result.error.message) }), true)
                 }
             })
             .catch((error: unknown) => {
                 // 传输层失败（HTTP 非 2xx 等）call 直接 reject，与 ok:false 同一路径展示
-                setForceResult(t('forceFailed', { message: truncateMessage(error instanceof Error ? error.message : String(error)) }))
+                showNotice(t('forceFailed', { message: truncateMessage(error instanceof Error ? error.message : String(error)) }), true)
             })
             .finally(() => {
                 setForceBusy(false)
@@ -179,7 +190,7 @@ export function Card(props: CardProps) {
     }
 
     return (
-        <div className="dsh-mr-card">
+        <div className="dsh-mr-card" ref={rootRef}>
             <div className="dsh-mr-title">{t('title')}</div>
             {!ready ? <div className="dsh-mr-hint">{t('loading')}</div> : null}
             <div className="dsh-mr-grid">
@@ -248,7 +259,28 @@ export function Card(props: CardProps) {
                     </button>
                 </span>
             </div>
-            {forceResult !== null ? <div className="dsh-mr-hint">{forceResult}</div> : null}
+            {/* 二次确认弹层：宿主 Modal 原语（portal/遮罩/Escape 由组件自带），按钮范式同 RiskConfirmation */}
+            <Modal
+                open={confirmOpen}
+                onClose={() => { setConfirmOpen(false) }}
+                title={t('force')}
+                closeLabel={t('close')}
+                description={t('forceConfirm')}
+                footer={<>
+                    <Button variant="outline" onClick={() => { setConfirmOpen(false) }}>{t('forceCancel')}</Button>
+                    <Button variant="primary" onClick={runForce}>{t('forceGo')}</Button>
+                </>}
+            />
+            {/* 结果反馈：宿主 Toast 原语（锚定卡片水平居中，自动淡出后卸载） */}
+            {toast !== null && (
+                <Toast
+                    key={toast.seq}
+                    text={toast.text}
+                    icon={toast.failed ? <IconWarningOutline16 /> : undefined}
+                    anchor={rootRef.current}
+                    onDone={() => { setToast(null) }}
+                />
+            )}
         </div>
     )
 }
