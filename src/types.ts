@@ -130,17 +130,10 @@ export type VersionedSection = Record<string, unknown>
 // ---------- 该包依赖链在 npm 上不可解析（transitive 范围仅存在于宿主 monorepo），故不装依赖、仅按结构使用； ----------
 // ---------- 浏览器半仅 type-only 引用（构建期擦除）。宿主契约变化时须同步本段。 ----------
 
-/** Connection RPC 的失败形状（对应宿主 ConnectionRpcFailure） */
-export interface RpcFailure {
-    code: string
-    message: string
-    details: object
-}
-
 /** Connection RPC 端点返回值（对应宿主 ConnectionRpcResult） */
 export type RpcResult<T> =
     | { readonly ok: true; readonly value: T }
-    | { readonly ok: false; readonly error: RpcFailure }
+    | { readonly ok: false; readonly error: { code: string; message: string; details: object } }
 
 /** Node 半使用的 ctx.connection.rpc.handle 切片（宿主 HostConnectionRpc.handle） */
 export type HostRpcHandle = (

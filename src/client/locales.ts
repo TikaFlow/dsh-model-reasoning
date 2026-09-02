@@ -31,7 +31,6 @@ export type CardKey =
     | 'loading'
     | 'unavailable'
     | 'readOnly'
-    | 'switchAria'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
     interface LocaleNamespaceMap {
@@ -74,7 +73,6 @@ export const zh: Record<CardKey, string> = {
     loading: '正在读取配置…',
     unavailable: '配置不可用（未检测到插件的宿主服务）',
     readOnly: '当前环境为只读，无法保存',
-    switchAria: '{row}：{column}',
 }
 
 export const en: Record<CardKey, string> = {
@@ -99,5 +97,4 @@ export const en: Record<CardKey, string> = {
     loading: 'Loading settings…',
     unavailable: 'Settings unavailable (host plugin service not found)',
     readOnly: 'Read-only environment; cannot save',
-    switchAria: '{row}: {column}',
 }

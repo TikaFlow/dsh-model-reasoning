@@ -41,7 +41,8 @@ export function lookup(indexed: IndexedCatalog, providerId: string, modelId: str
         const group = groups.get(provider)
         if (!group) return
         const hit = matchId(bare, group.ids)
-        return hit === undefined ? undefined : group.entries.find((entry) => entry.id === hit)
+        if (hit === undefined) return
+        return group.entries.find((entry) => entry.id === hit)
     }
     // 配置 provider 精确命中目录时，仅在该 provider 内匹配
     if (providerId && groups.has(providerId)) {

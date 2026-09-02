@@ -3,7 +3,7 @@ import { fetchLatest, setCatalog } from './catalog'
 import { MAX_ATTEMPTS, PLUGIN_NAME, RETRY_DELAY_MS } from './constants'
 import { fix } from './fix'
 
-/** 异步拉取最新数据：成功后更新索引并再次填充；isDisposed 避免结果触碰已卸载上下文 */
+/** 异步拉取最新数据：成功后更新内存索引并再次填充；失败按固定间隔重试。isDisposed 避免结果触碰已卸载上下文 */
 export function refresh(ctx: Context, isDisposed: () => boolean, retryCount = MAX_ATTEMPTS): void {
     fetchLatest(ctx)
         .then((indexed) => {

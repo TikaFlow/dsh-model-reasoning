@@ -78,12 +78,12 @@ function ensureStyles(): void {
     stylesInjected = true
 }
 
-/** 失败信息截断（提示行为小字，防长消息撑爆卡片） */
+/** 失败信息截断（Toast 文案为单行小字，防长消息撑爆布局） */
 function truncateMessage(value: string): string {
     return value.length > 120 ? `${value.slice(0, 119)}…` : value
 }
 
-/** 自绘开关（全仓范式：button role=switch + aria-checked，无现成组件可复用） */
+/** 自绘开关（宿主无现成 Switch，结构与宿主内置设置卡片的手绘开关一致） */
 function Switch(props: { checked: boolean; disabled: boolean; aria: string; onChange: () => void }) {
     return (
         <button

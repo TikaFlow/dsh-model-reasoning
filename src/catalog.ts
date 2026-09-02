@@ -51,7 +51,7 @@ function fromApiEntry(entry: unknown): ModelEntry | undefined {
     // 图片模态（modalities.input 含 'image'）：仅记录支持图片的模型（置 true）；
     // 不含 image、无数组或空数组均省略（不缓存 false，控制体积）；pdf/video/audio 等其他值忽略
     const rawInput = isPlainObject(modalities) && Array.isArray(modalities.input) ? modalities.input : undefined
-    const image = rawInput && rawInput.includes('image')
+    const image = !!rawInput && rawInput.includes('image')
     // 有推理级别、容量或图片支持才算有效数据
     const hasReasoning = reasoning === true && (toggle || efforts.length > 0)
     const hasContext = contextWindow !== undefined || maxTokens !== undefined
@@ -116,7 +116,7 @@ export async function readCache(): Promise<IndexedCatalog | undefined> {
     }
 }
 
-/** 拉取 models.dev 最新数据：数据非空才返回并覆盖缓存；内容无变化跳过写入。失败抛出由调用方记录日志 */
+/** 拉取 models.dev 最新数据：数据非空才构建索引并覆盖缓存；内容无变化跳过写入。失败抛出由调用方记录日志 */
 export async function fetchLatest(ctx: Context): Promise<IndexedCatalog> {
     const res = await fetch(API_URL, {
         signal: AbortSignal.timeout(FETCH_MS),

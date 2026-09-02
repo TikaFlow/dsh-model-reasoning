@@ -34,12 +34,11 @@ function isSettingsConflict(error: unknown): boolean {
 }
 
 /**
- * 遍历配置的模型写回变更：缺失推理级别/容量/图片模态且有数据则填充，开启 allowUpdate 则同步最新值，
- * 并剔除空 input/compat。读 descriptor.user（原始字段）整段写回 models（路径 op
- * 不支持数组下标中继）；数据无档位不删除已有配置。
- * force=true 单次绕过 allowUpdate 门控（等价三项临时为 true，不落存储、不影响常规调用），
- * 供浏览器半「强制更新」RPC 使用。返回本次变更的模型数；写回失败（冲突重试用尽等）
- * 先告警再抛出，由调用方决定后续处理。
+ * 遍历配置的模型写回变更：缺失推理级别/容量/图片模态且有目录数据则填充，allowUpdate（force 时
+ * 单次绕过，不落存储）开启则按目录最新值覆盖，并剔除空 input/compat。读 descriptor.user（原始
+ * 字段），按 provider 整数组写回 models（路径 op 不支持数组下标，故 value 为全量重建的数组，
+ * 未变更元素原样保留）；数据无档位不删除已有配置。返回变更模型数；写回失败（冲突重试用尽等）
+ * 先告警再抛出，由调用方决定后续处理（RPC 转失败结果回传，事件侧吞掉 rejection）。
  */
 export async function fix(ctx: Context, force = false): Promise<number> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -69,7 +68,7 @@ export async function fix(ctx: Context, force = false): Promise<number> {
                     contextWindow?: unknown
                     maxTokens?: unknown
                 }
-                if (id == null) continue
+                if (id === undefined || id === null) continue
                 const cleaned = stripEmptyArtifacts(record)
                 const entry = lookup(indexed, providerId, String(id))
                 const efforts = toReasoningEfforts(entry)

@@ -12,9 +12,7 @@ export const name = PLUGIN_NAME
 export const inject = ['settings', 'connection']
 
 /** 吞掉 fix 写回失败的 rejection（失败日志已在 fix 内告警，避免未处理拒绝） */
-function swallowFixError(): void {
-    /* 无需额外动作 */
-}
+const swallowFixError = (): void => {}
 
 export function apply(ctx: Context) {
     // 注册自有配置命名空间：段为版本快照容器，setSource 解析出运行时配置，onChange 响应配置变更
@@ -34,7 +32,7 @@ export function apply(ctx: Context) {
         if (ns !== API_NS) return
         fix(ctx).catch(swallowFixError)
     })
-    // 浏览器半「强制更新」RPC channel（写回结果经 ConnectionRpcResult 回传卡片）
+    // 浏览器半「强制更新」RPC channel（结果经 RpcResult 回传卡片）
     installRpc(ctx)
     // 首轮：等待自有命名空间注册完成 → 配置迁移 → 缓存读取 → 填充 → 异步刷新，统一由 effect 管理
     // （注册经 installSettingsSection 的子 fiber 延迟到微任务，必须等其完成后再迁移，否则 describe() 读空）

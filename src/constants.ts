@@ -25,15 +25,17 @@ export const VERSION_PREFIX = 'version-'
 export const CAPACITY_UNLIMITED = 99_999_999
 
 export const API_URL = 'https://models.dev/api.json'
+/** 拉取超时（毫秒） */
 export const FETCH_MS = 10_000
-/** 拉取、缓存写入与填充冲突共用的总尝试次数；固定重试间隔用于拉取与缓存写入 */
+/** 拉取、缓存写入与填充冲突共用的总尝试次数 */
 export const MAX_ATTEMPTS = 3
+/** 拉取与缓存写入失败后的固定重试间隔（毫秒） */
 export const RETRY_DELAY_MS = 5_000
 
 /** 启动等待自有命名空间注册完成的最大轮询次数（每次让出一个宏任务，正常一两次即命中） */
 export const REGISTER_WAIT_MAX = 50
 
-/** 缓存文件：基于模块路径定位，构建时复制；网络拉取成功后覆盖 */
+/** 缓存文件路径（基于模块路径定位，构建时复制；网络拉取成功后覆盖） */
 export const CACHE_FILE = join(dirname(fileURLToPath(import.meta.url)), 'public', 'models-cache.json')
 
 /** 推理级别取值，与 harness 的 ModelThinkingLevel 一致 */

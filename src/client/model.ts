@@ -93,7 +93,7 @@ function parseV1(entry: unknown): Flags | undefined {
 
 /**
  * 解码命名空间整段（镜像 resolveConfig）：优先当前版本快照；否则取 <= 当前的最高旧快照；
- * 均不可用回退默认。**永不返回 undefined**（返回 undefined 会让宿主 scope 永挂 loading）。
+ * 均不可用回退默认。永不返回 undefined（返回 undefined 会让宿主 scope 永挂 loading）。
  */
 export function decodeSection(section: unknown): Flags {
     if (!isPlainObject(section)) return DEFAULT_FLAGS

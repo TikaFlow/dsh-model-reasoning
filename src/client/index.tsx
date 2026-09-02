@@ -5,7 +5,7 @@
  * → 取宿主 connection 服务的 RPC 载体（「强制更新」按钮触发 Node 半 force 填充，通道 /tikaflow-model-fix）
  * → 向「模型」选项卡底部槽 settings.models.footer 注册卡片（槽自宿主 0.1.2-alpha.2 起存在，
  *   由 package.json peerDependencies 声明下限；更旧宿主无此槽、卡片不出现，属预期不支持）。
- * 类型边全部 type-only（构建期擦除，不违反跨插件纯度纪律）；应用写入触发宿主 onChange → fix。
+ * 类型边全部 type-only（构建期擦除，不违反跨插件纯度纪律）。
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
