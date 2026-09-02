@@ -33,7 +33,7 @@ export interface CardProps {
 
 const STYLE_ID = 'dsh-model-reasoning-card-css'
 
-/** 内嵌样式表（类名 dsh-mr- 前缀防撞；颜色走 --dsw-alias-* 令牌带兜底 + body[data-ds-dark-theme] 镜像适配深浅色） */
+/** 内嵌样式表（类名 dsh-mr- 前缀防撞；颜色全部走 --dsw-alias-* 令牌带字面兜底，深浅色由宿主令牌自动切换） */
 const STYLE_TEXT = [
     '.dsh-mr-card{display:flex;flex-direction:column;gap:12px;max-width:720px;padding:16px;border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.08))}',
     '.dsh-mr-title{font-size:14px;font-weight:600;color:var(--dsw-alias-label-primary,#1a1a1a)}',
@@ -46,11 +46,8 @@ const STYLE_TEXT = [
     '.dsh-mr-switch{position:relative;flex:none;width:36px;height:20px;padding:0;border:none;border-radius:10px;cursor:pointer;background:var(--dsw-alias-border-l4,rgba(0,0,0,.16));transition:background .15s ease}',
     '.dsh-mr-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6bff)}',
     '.dsh-mr-switch:disabled{opacity:.5;cursor:default}',
-    '.dsh-mr-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:transform .15s ease}',
+    '.dsh-mr-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--dsw-alias-label-primary-foreground,#fff);transition:transform .15s ease}',
     '.dsh-mr-switch[aria-checked="true"] .dsh-mr-thumb{transform:translateX(16px)}',
-    // 暗色主题镜像浅色观感：圆点整体走黑色系，关/开用不同深度（主题标记见宿主 body[data-ds-dark-theme]）
-    'body[data-ds-dark-theme] .dsh-mr-thumb{background:var(--dsw-alias-bg-layer-2,#232326)}',
-    'body[data-ds-dark-theme] .dsh-mr-switch[aria-checked="true"] .dsh-mr-thumb{background:var(--dsw-alias-bg-module-platform,#050506)}',
     '.dsh-mr-footer{display:flex;align-items:center;justify-content:space-between;gap:8px}',
     '.dsh-mr-actions{display:flex;align-items:center;gap:8px}',
     '.dsh-mr-hint{font-size:12px;color:var(--dsw-alias-label-tertiary,#999)}',
