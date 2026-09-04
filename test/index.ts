@@ -2,11 +2,13 @@
 import { run as runCatalog } from './catalog.test'
 import { run as runClientModel } from './client-model.test'
 import { run as runConfig } from './config.test'
+import { run as runLookup } from './lookup.test'
 import { run as runMigrate } from './migrate.test'
 import { summary } from './helper'
 
 runCatalog()
 runClientModel()
 runConfig()
+runLookup()
 runMigrate()
 summary()

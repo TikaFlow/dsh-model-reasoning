@@ -1,8 +1,11 @@
-/** src/client/model.ts 纯映射层用例：解码回落链、总控/单格语义、脏检测、快照规范化 */
+/** src/client/model.ts 纯映射层用例：解码（只读 version-2，非法/缺失回默认）、总控/单格语义、脏检测、快照规范化 */
 
 import { check, stable } from './helper'
+import { CONFIG_VERSION as PLUGIN_CONFIG_VERSION, PLUGIN_NS } from '../src/constants'
 import {
+    CONFIG_VERSION,
     DEFAULT_FLAGS,
+    MODEL_FIX_NS,
     VERSION_KEY,
     applyColumn,
     decodeSection,
@@ -39,33 +42,29 @@ export function run(): void {
     )
     // ---------- v2 非对象（布尔旧形态）视为非法，走回落 ----------
     check('decode v2 布尔形态非法回退默认', stable(decodeSection({ 'version-2': true })) === stable(DEFAULT_FLAGS))
-    // ---------- v2 字段存在但类型非法 => 整段快照非法，回落到 v1 ----------
+    // ---------- v2 字段类型非法 => 整段快照非法，回退默认（不读旧版本快照） ----------
     check(
-        'decode v2 字段非布尔非法，回落 v1',
+        'decode v2 字段非布尔非法回退默认',
         stable(decodeSection({
             'version-1': { configVersion: 1, autoFill: { reasoning: false, context: false }, allowUpdate: { reasoning: true, context: true } },
             'version-2': { autoFill: { reasoning: 'yes' } },
-        })) === stable({ autoFill: { reasoning: false, context: false, image: true }, allowUpdate: { reasoning: true, context: true, image: false } }),
+        })) === stable(DEFAULT_FLAGS),
         decodeSection({ 'version-1': { autoFill: { reasoning: false, context: false }, allowUpdate: { reasoning: true, context: true } }, 'version-2': { autoFill: { reasoning: 'yes' } } }),
     )
-    // ---------- 仅 v1：升级补 image 默认 ----------
+    // ---------- 只读 version-2：段内仅有旧版本快照（迁移未完成/失败）不读取，回默认 ----------
     check(
-        'decode v1 升级补 image 默认',
-        stable(decodeSection({ 'version-1': { configVersion: 1, autoFill: { reasoning: true, context: false }, allowUpdate: { reasoning: false, context: true } } })) === stable({
-            autoFill: { reasoning: true, context: false, image: true },
-            allowUpdate: { reasoning: false, context: true, image: false },
-        }),
+        'decode 段内仅有 v1/v0 回默认',
+        stable(decodeSection({
+            'version-1': { configVersion: 1, autoFill: { reasoning: true, context: false }, allowUpdate: { reasoning: false, context: true } },
+            'version-0': { allowUpdate: true, autoFill: true },
+        })) === stable(DEFAULT_FLAGS),
         decodeSection({ 'version-1': { autoFill: { reasoning: true, context: false }, allowUpdate: { reasoning: false, context: true } } }),
     )
-    // ---------- 多快照取 ≤ 当前的最高版本（更高版本快照忽略） ----------
+    // ---------- 更高版本快照不读取（由写入它的版本负责） ----------
     check(
-        'decode 取最高可用快照，忽略更高版本',
-        stable(decodeSection({
-            'version-1': { autoFill: { reasoning: false, context: false }, allowUpdate: { reasoning: false, context: false } },
-            'version-2': { autoFill: { reasoning: true, context: false, image: false }, allowUpdate: { reasoning: false, context: false, image: false } },
-            'version-9': { autoFill: { reasoning: true, context: true, image: true } },
-        })) === stable({ autoFill: { reasoning: true, context: false, image: false }, allowUpdate: { reasoning: false, context: false, image: false } }),
-        decodeSection({ 'version-1': {}, 'version-2': { autoFill: { reasoning: true, context: false, image: false } }, 'version-9': { autoFill: { reasoning: true, context: true, image: true } } }),
+        'decode 段内仅有更高版本回默认',
+        stable(decodeSection({ 'version-9': { autoFill: { reasoning: true, context: true, image: true } } })) === stable(DEFAULT_FLAGS),
+        decodeSection({ 'version-9': { autoFill: { reasoning: true, context: true, image: true } } }),
     )
     // ---------- 垃圾输入一律兜默认，永不 undefined ----------
     for (const junk of [undefined, null, 42, 'x', [], { foo: 1 }, { 'version-2': null }, { 'version-x': {} }]) {
@@ -82,6 +81,9 @@ export function run(): void {
         snapshotFromFlags(DEFAULT_FLAGS),
     )
     check('snapshot 键名为 version-2', VERSION_KEY === 'version-2', VERSION_KEY)
+    // ---------- 跨半字面量漂移守护（浏览器半禁值导入 Node 半，字面量须两侧同步） ----------
+    check('MODEL_FIX_NS 与 PLUGIN_NS 一致', MODEL_FIX_NS === PLUGIN_NS, MODEL_FIX_NS)
+    check('CONFIG_VERSION 与 constants 侧一致', CONFIG_VERSION === PLUGIN_CONFIG_VERSION, CONFIG_VERSION)
     // ---------- 总控显示：任一为开则开，全关才关 ----------
     check('master 全开为开', masterValue(FLAGS_ALL_ON, 'autoFill') === true)
     check('master 全关为关', masterValue(DEFAULT_FLAGS, 'allowUpdate') === false)

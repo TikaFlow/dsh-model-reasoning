@@ -5,8 +5,12 @@ import { check, stable } from './helper'
 /** 执行本文件的全部用例 */
 export function run(): void {
     check('versionKey 拼接', versionKey(1) === 'version-1')
-    check('parseVersion 合法', parseVersion('version-12') === 12)
+    check('parseVersion 合法', parseVersion('version-12') === 12 && parseVersion('version-0') === 0)
     check('parseVersion 非法返回 undefined', parseVersion('version-x') === undefined && parseVersion('allowUpdate') === undefined)
+    // 非规范键必须拒绝：collectVersions/pruneOps 会用 versionKey() 重建键名，宽泛归一会导致读空、清理脱靶
+    for (const bad of ['version-', 'version-01', 'version- 1', 'version-+1', 'version-1e3', 'version-1.0', 'version--1']) {
+        check(`parseVersion 拒绝非规范键 ${bad}`, parseVersion(bad) === undefined, bad)
+    }
 
     const DEFAULT_STABLE = stable({
         allowUpdate: { reasoning: false, context: false, image: false },
