@@ -31,11 +31,10 @@ const PluginConfigSchema: z<PluginConfig> = z.object({
 /** 命名空间整段的 schema：宽松字典，保证比当前代码更新的版本快照也能通过注册校验 */
 export const SectionSchema: z<VersionedSection> = z.dict(z.any())
 
-/** 解析版本快照键 version-N；非法返回 undefined */
+/** 解析版本快照键 version-N；非法返回 undefined。严格匹配规范键（重建键名需与实际键一致，禁宽泛归一） */
 export function parseVersion(key: string): number | undefined {
-    if (!key.startsWith(VERSION_PREFIX)) return
-    const value = Number(key.slice(VERSION_PREFIX.length))
-    return Number.isInteger(value) && value >= 0 ? value : undefined
+    const match = /^version-(0|[1-9]\d*)$/.exec(key)
+    return match ? Number(match[1]) : undefined
 }
 
 /** 版本快照键 */

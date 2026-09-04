@@ -58,7 +58,11 @@ export function apply(ctx: Context) {
                 if (disposed) return
                 ctx.logger.warn(`${PLUGIN_NAME}: 配置迁移失败，使用当前生效配置继续：${error instanceof Error ? error.message : String(error)}`)
             })
-            .then(() => readCache())
+            .then(() => {
+                // 卸载后不再发起无人消费的缓存文件读取
+                if (disposed) return
+                return readCache()
+            })
             .then((cached) => {
                 if (disposed) return
                 if (cached) {

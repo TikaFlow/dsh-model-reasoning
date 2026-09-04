@@ -61,10 +61,16 @@ export default defineConfig([
         },
         plugins: [
             {
-                // 跨插件纯度门禁（自守，同 harness 规则）：非基线的 @deepseek-ai/* 值导入直接构建失败；
-                // type-only 导入在解析前已被擦除，不受影响
+                // 跨插件纯度门禁（自守，同 harness 规则）：非基线的 @deepseek-ai/* 与跨半相对路径
+                // 的值导入直接构建失败；type-only 导入在解析前已被擦除，不受影响
                 name: 'dsh-client-bundle-purity',
                 resolveId(source: string) {
+                    if (source.startsWith('../')) {
+                        throw new Error(
+                            `client bundle purity: "${source}" 跨半值导入 Node 半源码（会拖入 node:path 等 Node 依赖）；`
+                            + '浏览器半只允许 type-only 导入 ../，跨半协作须以字面量/契约复制维护（改动须两侧同步）',
+                        )
+                    }
                     if (!source.startsWith('@deepseek-ai/') || isBaseline(source)) return null
                     throw new Error(
                         `client bundle purity: "${source}" 不在宿主模块表基线内；`
