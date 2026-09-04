@@ -14,6 +14,8 @@ export type CardKey =
     | 'colModelParams'
     | 'colAutoFill'
     | 'colAllowUpdate'
+    | 'tipAutoFill'
+    | 'tipAllowUpdate'
     | 'rowReasoning'
     | 'rowContext'
     | 'rowImage'
@@ -56,6 +58,8 @@ export const zh: Record<CardKey, string> = {
     colModelParams: '模型参数',
     colAutoFill: '自动填充',
     colAllowUpdate: '允许更新',
+    tipAutoFill: '该参数空缺时自动填充',
+    tipAllowUpdate: '当 models.dev 的数据与已有参数不一致时，更新该参数',
     rowReasoning: '推理级别',
     rowContext: '上下文与输出',
     rowImage: '图片输入',
@@ -80,6 +84,8 @@ export const en: Record<CardKey, string> = {
     colModelParams: 'Model parameter',
     colAutoFill: 'Auto fill',
     colAllowUpdate: 'Allow update',
+    tipAutoFill: 'Auto-fills the parameter when it is missing',
+    tipAllowUpdate: 'Updates the parameter when models.dev data disagrees with the existing value',
     rowReasoning: 'Reasoning efforts',
     rowContext: 'Context & output',
     rowImage: 'Image input',

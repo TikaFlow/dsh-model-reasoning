@@ -7,7 +7,7 @@
  */
 
 import { useRef, useState, useSyncExternalStore } from 'react'
-import { Button, IconWarningOutline16, Modal, Toast } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconWarningOutline16, Modal, Toast, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SettingsScope } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RpcResult } from '../types'
@@ -205,7 +205,9 @@ export function Card(props: CardProps) {
                             aria={`${t('colAutoFill')} (${t('colModelParams')})`}
                             onChange={() => { onMaster('autoFill') }}
                         />
-                        {t('colAutoFill')}
+                        <Tooltip label={t('tipAutoFill')} side="bottom" delayMs={500}>
+                            <span>{t('colAutoFill')}</span>
+                        </Tooltip>
                     </span>
                     <span className="dsh-mr-colCell">
                         <Switch
@@ -214,7 +216,9 @@ export function Card(props: CardProps) {
                             aria={`${t('colAllowUpdate')} (${t('colModelParams')})`}
                             onChange={() => { onMaster('allowUpdate') }}
                         />
-                        {t('colAllowUpdate')}
+                        <Tooltip label={t('tipAllowUpdate')} side="bottom" delayMs={500}>
+                            <span>{t('colAllowUpdate')}</span>
+                        </Tooltip>
                     </span>
                 </div>
                 {FIELD_KEYS.map((key) => (
