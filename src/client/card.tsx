@@ -43,6 +43,7 @@ const STYLE_TEXT = [
     '.dsh-mr-head{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary,#666)}',
     '.dsh-mr-label{font-size:13px;color:var(--dsw-alias-label-primary,#1a1a1a)}',
     '.dsh-mr-colCell{display:flex;align-items:center;gap:8px}',
+    '.dsh-mr-tipText{cursor:help}',
     '.dsh-mr-cellWrap{display:flex;align-items:center}',
     '.dsh-mr-switch{position:relative;flex:none;width:36px;height:20px;padding:0;border:none;border-radius:10px;cursor:pointer;background:var(--dsw-alias-border-l3,rgba(0,0,0,.2));transition:background .12s ease}',
     '.dsh-mr-switch[aria-checked="true"]{background:var(--dsw-alias-brand-primary,#2f6bff)}',
@@ -206,7 +207,7 @@ export function Card(props: CardProps) {
                             onChange={() => { onMaster('autoFill') }}
                         />
                         <Tooltip label={t('tipAutoFill')} side="bottom" delayMs={500}>
-                            <span>{t('colAutoFill')}</span>
+                            <span className="dsh-mr-tipText" tabIndex={0}>{t('colAutoFill')}</span>
                         </Tooltip>
                     </span>
                     <span className="dsh-mr-colCell">
@@ -217,7 +218,7 @@ export function Card(props: CardProps) {
                             onChange={() => { onMaster('allowUpdate') }}
                         />
                         <Tooltip label={t('tipAllowUpdate')} side="bottom" delayMs={500}>
-                            <span>{t('colAllowUpdate')}</span>
+                            <span className="dsh-mr-tipText" tabIndex={0}>{t('colAllowUpdate')}</span>
                         </Tooltip>
                     </span>
                 </div>
